@@ -1,0 +1,337 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+.pybuilder/
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# poetry
+poetry.lock
+
+# pdm
+.pdm.toml
+
+# PEP 582
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# PyCharm
+.idea/
+*.iml
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Linux
+*~
+.directory
+.Trash-*
+
+# Excel temporary files
+~$*.xlsx
+~$*.xls
+~$*.xlsm
+*.tmp
+
+# Project specific - Data files
+*.xlsx
+*.xls
+*.xlsm
+*.csv
+!tests/sample_data/*.xlsx
+!tests/sample_data/*.csv
+
+# Output directories
+output/
+results/
+exports/
+downloads/
+temp/
+tmp/
+
+# Streamlit
+.streamlit/secrets.toml
+.streamlit/credentials.toml
+
+# Test data (except sample files)
+test_data/
+data/
+!tests/sample_data/
+
+# Log files
+logs/
+*.log
+*.pid
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*_backup.*
+*_old.*
+
+# Archive files
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
+
+# Node (if using any JS tools)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Docker
+*.dockerignore
+docker-compose.override.yml
+
+# Local configuration
+config.local.toml
+settings.local.json
+local_settings.py
+
+# Private keys and certificates
+*.pem
+*.key
+*.crt
+*.cer
+*.pfx
+*.p12
+
+# Sensitive data
+secrets/
+credentials/
+*.secret
+
+# Cache directories
+.cache/
+.pytest_cache/
+.coverage_cache/
+
+# Profiling data
+*.prof
+*.lprof
+
+# Editor swap files
+*.swp
+*.swo
+*.swn
+.*.swp
+
+# Compiled documentation
+docs/_build/
+docs/.doctrees/
+
+# Performance profiling
+*.stats
+*.profile
+
+# Virtual environments with different names
+venv*/
+env*/
+.virtualenv/
+.pyenv/
+virtualenv/
+
+# Package manager directories
+pip-wheel-metadata/
+*.egg-info/
+
+# IDE specific
+.project
+.pydevproject
+.settings/
+.classpath
+
+# Temporary processing files
+processing/
+work/
+workspace/
+
+# User-specific files
+user_data/
+user_uploads/
+personal/
+
+# Generated files
+generated/
+gen/
+auto_generated/
+
+# Ignore all .env files except templates
+.env*
+!.env.template
+!.env.example
+
+# Streamlit cache
+.streamlit/cache/
+.streamlit/storage/
+
+# Testing artifacts
+.benchmarks/
+htmlcov/
+.coverage
+coverage.xml
+*.cover
+.hypothesis/
+
+# Distribution files
+dist/
+build/
+*.whl
+
+# Documentation build
+docs/_build/
+docs/_static/
+docs/_templates/
+
+# Ignore large data files but keep directory structure
+data/.gitkeep
+output/.gitkeep
+tests/sample_data/.gitkeep
