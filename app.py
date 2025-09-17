@@ -1,9 +1,4 @@
-@staticmethod
-    def is_index_product(underlying: str) -> bool:
-        """Check if the underlying is an index product"""
-        if pd.isna(underlying):
-            return False
-        return 'INDEX' in str(underlying).upper()"""
+"""
 Expiry Trade Generator - Streamlit Web Application
 Automated Excel transformation for derivatives and cash trades
 """
@@ -14,7 +9,6 @@ import numpy as np
 from datetime import datetime
 import io
 from typing import Tuple, List, Dict
-# Note: No plotly import needed - using Streamlit's native charts
 
 # Page configuration
 st.set_page_config(
@@ -231,7 +225,7 @@ class ExpiryTradeProcessor:
         
         # Cash entry - only for ITM single stock options (NOT for index)
         cash = None
-        if is_itm and not is_index:  # Changed from is_single_stock to not is_index
+        if is_itm and not is_index:
             if option_type == 'Call':
                 cash_buy_sell = 'Buy' if position > 0 else 'Sell'
                 cash_price = strike  # Calls are exercised at strike price
@@ -280,7 +274,7 @@ class ExpiryTradeProcessor:
                 elif trade_type in ['Call', 'Put']:
                     deriv, cash = ExpiryTradeProcessor.process_options(row)
                     derivatives.append(deriv)
-                    if cash:  # Cash entry might be None for OTM options
+                    if cash:  # Cash entry might be None for OTM options or index options
                         cash_trades.append(cash)
                         
                 else:
@@ -568,8 +562,6 @@ def main():
                 st.markdown("---")
                 col1, col2, col3 = st.columns([2, 3, 2])
                 with col2:
-                    # Create a ZIP file with all outputs (optional, complex implementation)
-                    # For now, show success message with individual downloads above
                     st.info("✅ All files are ready for download using the buttons above")
                 
                 # Detailed views
