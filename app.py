@@ -1,6 +1,13 @@
 """
 Expiry Trade Generator - Streamlit Web Application
-Automated Excel transformation for derivatives and cash trades
+Automated Excel transformation for derivatives and cash trades with tax calculations
+
+Features:
+- Process futures and options trades at expiry
+- Generate derivatives closing trades
+- Create cash trades with STT and Stamp Duty calculations
+- Handle index vs stock products differently
+- Export to Excel/CSV formats
 """
 
 import streamlit as st
@@ -82,7 +89,14 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 class ExpiryTradeProcessor:
-    """Main processor class for expiry trades"""
+    """
+    Main processor class for expiry trades
+    
+    Processes derivatives and cash trades with tax calculations:
+    - Futures: STT @ 0.1%, Stamp Duty @ 0.002%
+    - Long Options: STT @ 0.125% of intrinsic, Stamp Duty @ 0.003% of strike
+    - Short Options: No taxes
+    """
     
     @staticmethod
     def validate_row(row: pd.Series, row_index: int) -> Dict:
@@ -151,17 +165,33 @@ class ExpiryTradeProcessor:
         # Cash entry - only for stock futures (not index futures)
         cash = None
         if not is_index:
+            cash_quantity = abs(position) * lot_size
+            cash_price = last_price
+            
+            # Tax Calculations for Futures
+            # STT = Quantity * Price * 0.1% (0.001)
+            stt = cash_quantity * cash_price * 0.001
+            
+            # Stamp Duty = Quantity * Price * 0.002% (0.00002)
+            stamp_duty = cash_quantity * cash_price * 0.00002
+            
+            # Total Taxes
+            taxes = stt + stamp_duty
+            
             cash = {
                 'Underlying': row['Underlying'],
                 'Symbol': row['Underlying'],  # For cash, Symbol = Underlying
                 'Expiry': '',
                 'Buy/Sell': 'Buy' if position > 0 else 'Sell',
                 'Strategy': 'EQLO2',  # Always EQLO2 for all cash trades
-                'Position': abs(position) * lot_size,
-                'Price': last_price,
+                'Position': cash_quantity,
+                'Price': cash_price,
                 'Type': 'CASH',
                 'Strike': '',
-                'Lot Size': ''
+                'Lot Size': '',
+                'STT': round(stt, 2),  # Round to 2 decimal places for currency
+                'Stamp Duty': round(stamp_duty, 2),
+                'Taxes': round(taxes, 2)
             }
         
         return derivative, cash
@@ -226,12 +256,35 @@ class ExpiryTradeProcessor:
         # Cash entry - only for ITM single stock options (NOT for index)
         cash = None
         if is_itm and not is_index:
+            cash_quantity = abs(position) * lot_size
+            settlement_price = last_price  # Last price is the settlement/expiry price
+            strike_price = strike  # Strike is the execution price for cash trade
+            
             if option_type == 'Call':
                 cash_buy_sell = 'Buy' if position > 0 else 'Sell'
-                cash_price = strike  # Calls are exercised at strike price
+                cash_price = strike_price
+                intrinsic_value = settlement_price - strike_price
             else:  # Put
                 cash_buy_sell = 'Sell' if position > 0 else 'Buy'
-                cash_price = strike  # Puts are also exercised at strike price
+                cash_price = strike_price
+                intrinsic_value = strike_price - settlement_price
+            
+            # Tax Calculations for Options
+            # Only LONG options (original position > 0) pay taxes
+            if position > 0:
+                # STT for Long ITM Options = 0.125% of Intrinsic Value * Quantity
+                # Ensure intrinsic value is non-negative for tax calculation
+                stt = cash_quantity * max(0, intrinsic_value) * 0.00125
+                
+                # Stamp Duty for Long ITM Options = 0.003% of Strike Price * Quantity
+                stamp_duty = cash_quantity * strike_price * 0.00003
+            else:
+                # Short ITM Options pay no taxes
+                stt = 0
+                stamp_duty = 0
+            
+            # Total Taxes
+            taxes = stt + stamp_duty
             
             cash = {
                 'Underlying': row['Underlying'],
@@ -239,11 +292,14 @@ class ExpiryTradeProcessor:
                 'Expiry': '',
                 'Buy/Sell': cash_buy_sell,
                 'Strategy': 'EQLO2',  # Always EQLO2 for all cash trades
-                'Position': abs(position) * lot_size,
+                'Position': cash_quantity,
                 'Price': cash_price,
                 'Type': 'CASH',
                 'Strike': '',
-                'Lot Size': ''
+                'Lot Size': '',
+                'STT': round(stt, 2),  # Round to 2 decimal places for currency
+                'Stamp Duty': round(stamp_duty, 2),
+                'Taxes': round(taxes, 2)
             }
         
         return derivative, cash
@@ -314,7 +370,7 @@ def convert_df_to_csv(df: pd.DataFrame) -> bytes:
 def main():
     # Header
     st.title("📊 Expiry Trade Generator")
-    st.markdown("**Automated Excel/CSV transformation for derivatives and cash trades**")
+    st.markdown("**Automated Excel/CSV transformation for derivatives and cash trades with tax calculations**")
     
     # Initialize session state
     if 'processed' not in st.session_state:
@@ -340,13 +396,45 @@ def main():
            - Strategies: FULO (long unwind) / FUSH (short unwind)
            - Stock options: Close at 0
            - Index options: Close at intrinsic value
-        2. **Cash**: Physical delivery trades (stocks only)
+        2. **Cash**: Physical delivery trades with taxes
            - Strategy: EQLO2 (all trades)
+           - Includes: STT, Stamp Duty, Total Taxes
            - No index products
         3. **Errors**: Processing issues
         """)
         
+        with st.expander("✨ Key Features", expanded=True):
+            st.markdown("""
+            - ✅ **Automatic tax calculations** (STT & Stamp Duty)
+            - ✅ **Smart differentiation** between Index & Stock products
+            - ✅ **Physical delivery** processing for stocks
+            - ✅ **Trade notes** (A/E) for option assignments
+            - ✅ **Universal strategy** (EQLO2) for all cash trades
+            - ✅ **Multi-format support** (Excel & CSV)
+            """)
+        
         st.divider()
+        
+        with st.expander("✨ Key Features", expanded=True):
+            st.markdown("""
+            - ✅ **Automatic tax calculations** (STT & Stamp Duty)
+            - ✅ **Smart differentiation** between Index & Stock products
+            - ✅ **Physical delivery** processing for stocks
+            - ✅ **Trade notes** (A/E) for option assignments
+            - ✅ **Universal strategy** (EQLO2) for all cash trades
+            - ✅ **Multi-format support** (Excel & CSV)
+            """)
+        
+        st.divider()
+        
+        st.success("""
+        **📊 Key Features:**
+        - ✅ Automatic tax calculations (STT & Stamp Duty)
+        - ✅ Index vs Stock differentiation
+        - ✅ Physical delivery processing
+        - ✅ Trade note assignments (A/E)
+        - ✅ Universal EQLO2 strategy for cash
+        """)
         
         st.info("""
         **Derivatives Strategies:**
@@ -361,10 +449,55 @@ def main():
         - E: ITM stock option sell (exercise)
         - Blank: Futures/OTM/Index products
         
+        **Tax Columns in Cash File:**
+        - STT: Securities Transaction Tax
+        - Stamp Duty: Transaction stamp duty
+        - Taxes: Total (STT + Stamp Duty)
+        
         **Index vs Stock Products:**
         - Index: Cash settled, no physical delivery
-        - Stock: Physical delivery required
+        - Stock: Physical delivery with taxes
         """)
+        
+        with st.expander("💰 Tax Calculation Details"):
+            st.markdown("""
+            ### Tax Rules for Cash Trades
+            
+            **📊 Stock Futures:**
+            - **STT**: Position × Price × 0.1% (0.001)
+            - **Stamp Duty**: Position × Price × 0.002% (0.00002)
+            - Applied to both long and short futures
+            
+            **📈 Long ITM Stock Options (Original Position > 0):**
+            - **STT**: Position × Intrinsic Value × 0.125% (0.00125)
+              - Call Intrinsic = Last Price - Strike Price
+              - Put Intrinsic = Strike Price - Last Price
+            - **Stamp Duty**: Position × Strike Price × 0.003% (0.00003)
+            
+            **📉 Short ITM Stock Options (Original Position < 0):**
+            - **STT**: ₹0 (No tax on short options)
+            - **Stamp Duty**: ₹0 (No tax on short options)
+            
+            **🔢 Tax Calculation Examples:**
+            
+            1. **Long Future (100 lots × 500 lot size = 50,000 qty) @ ₹150:**
+               - STT = 50,000 × 150 × 0.001 = ₹7,500
+               - Stamp Duty = 50,000 × 150 × 0.00002 = ₹1.50
+               - Total Tax = ₹7,501.50
+            
+            2. **Long ITM Call (50 lots × 250 lot size = 12,500 qty)**
+               - Strike: ₹100, Settlement: ₹110
+               - STT = 12,500 × (110-100) × 0.00125 = ₹156.25
+               - Stamp Duty = 12,500 × 100 × 0.00003 = ₹37.50
+               - Total Tax = ₹193.75
+            
+            3. **Short ITM Put:**
+               - STT = ₹0
+               - Stamp Duty = ₹0
+               - Total Tax = ₹0
+            
+            **Note:** Index products don't appear in cash file (cash settled)
+            """)
         
         with st.expander("🔧 Processing Rules"):
             st.markdown("""
@@ -401,6 +534,24 @@ def main():
             - ITM Stock Puts: Sell at Strike (long) / Buy at Strike (short)
             - **ALL trades use strategy: EQLO2**
             - Index products: NO cash entries
+            
+            **Tax Calculations in Cash File:**
+            
+            📊 **Futures Taxes:**
+            - STT = Quantity × Price × 0.1%
+            - Stamp Duty = Quantity × Price × 0.002%
+            
+            📈 **Long ITM Options (Position > 0):**
+            - STT = Quantity × Intrinsic Value × 0.125%
+              - Call Intrinsic = Settlement - Strike
+              - Put Intrinsic = Strike - Settlement
+            - Stamp Duty = Quantity × Strike × 0.003%
+            
+            📉 **Short ITM Options (Position < 0):**
+            - STT = 0
+            - Stamp Duty = 0
+            
+            💰 **Total Taxes = STT + Stamp Duty**
             """)
     
     # Main content area
@@ -522,10 +673,15 @@ def main():
                     st.markdown("**Cash File**")
                     st.metric("", f"{len(st.session_state['cash'])} cash legs", label_visibility="collapsed")
                     
+                    # Show total taxes if cash file exists
+                    if not st.session_state['cash'].empty and 'Taxes' in st.session_state['cash'].columns:
+                        total_tax = st.session_state['cash']['Taxes'].sum()
+                        st.caption(f"Total Taxes: ₹{total_tax:,.2f}")
+                    
                     if not st.session_state['cash'].empty:
                         excel_data = convert_df_to_excel(st.session_state['cash'])
                         st.download_button(
-                            label="💰 Download Cash",
+                            label="💰 Download Cash (with Taxes)",
                             data=excel_data,
                             file_name='expiry_trades_cash.xlsx',
                             mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -617,7 +773,7 @@ def main():
                 with tab2:
                     if not st.session_state['cash'].empty:
                         # Show summary statistics
-                        col1, col2 = st.columns(2)
+                        col1, col2, col3 = st.columns(3)
                         with col1:
                             st.markdown("**Buy/Sell Distribution**")
                             buysell_counts = st.session_state['cash']['Buy/Sell'].value_counts()
@@ -626,13 +782,35 @@ def main():
                             st.markdown("**Top Underlyings by Position**")
                             position_sum = st.session_state['cash'].groupby('Underlying')['Position'].sum().sort_values(ascending=False).head(10)
                             st.bar_chart(position_sum)
+                        with col3:
+                            st.markdown("**Tax Summary**")
+                            if 'Taxes' in st.session_state['cash'].columns:
+                                total_stt = st.session_state['cash']['STT'].sum()
+                                total_stamp = st.session_state['cash']['Stamp Duty'].sum()
+                                total_taxes = st.session_state['cash']['Taxes'].sum()
+                                st.metric("Total STT", f"₹{total_stt:,.2f}")
+                                st.metric("Total Stamp Duty", f"₹{total_stamp:,.2f}")
+                                st.metric("Total Taxes", f"₹{total_taxes:,.2f}")
                         
-                        # Note about strategy
-                        st.success("✅ All cash trades use universal strategy: **EQLO2**")
+                        # Note about strategy and taxes
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.success("✅ All cash trades use universal strategy: **EQLO2**")
+                        with col2:
+                            st.info("💰 Taxes calculated as per exchange rules for physical delivery")
                         
-                        st.markdown("**Full Cash Data**")
+                        st.markdown("**Full Cash Data with Tax Details**")
+                        # Display with proper column order including taxes
+                        if 'STT' in st.session_state['cash'].columns:
+                            display_columns = ['Underlying', 'Symbol', 'Expiry', 'Buy/Sell', 
+                                             'Strategy', 'Position', 'Price', 'Type', 
+                                             'Strike', 'Lot Size', 'STT', 'Stamp Duty', 'Taxes']
+                            display_df = st.session_state['cash'][display_columns]
+                        else:
+                            display_df = st.session_state['cash']
+                        
                         st.dataframe(
-                            st.session_state['cash'],
+                            display_df,
                             use_container_width=True,
                             height=400
                         )
@@ -678,7 +856,7 @@ def main():
         st.markdown("""
         <div style='background-color: #f0f2f6; padding: 30px; border-radius: 10px; text-align: center;'>
             <h2>Welcome to Expiry Trade Generator</h2>
-            <p style='font-size: 18px; color: #555;'>Transform your expiry trades Excel/CSV file into derivatives and cash files with one click!</p>
+            <p style='font-size: 18px; color: #555;'>Transform your expiry trades into derivatives and cash files with automated tax calculations!</p>
         </div>
         """, unsafe_allow_html=True)
         
@@ -707,7 +885,7 @@ def main():
             st.markdown("""
             <div style='background-color: #e8f5e9; padding: 20px; border-radius: 10px; height: 200px;'>
                 <h4 style='color: #4caf50;'>3️⃣ Download</h4>
-                <p>Download your generated files with proper formatting</p>
+                <p>Get your files with proper formatting and automatic tax calculations</p>
             </div>
             """, unsafe_allow_html=True)
         
@@ -728,12 +906,24 @@ def main():
             
             st.caption("""
             **Expected Output for Sample Data:**
-            - Row 1 (Stock Future): Derivatives at 150.5 + Cash trade (EQLO2)
-            - Row 2 (ITM Stock Call): Derivatives at 0 + Cash at 100 (EQLO2) + tradenote "A" 
-            - Row 3 (OTM Stock Put): Derivatives at 0, no cash trade
-            - Row 4 (Index Future): Derivatives at 25500, no cash trade
-            - Row 5 (ITM Index Call): Derivatives at 250 (25250-25000), no cash
-            - Row 6 (ITM Index Put): Derivatives at 200 (48000-47800), no cash
+            
+            **Derivatives File:**
+            - Row 1 (Stock Future): Close at 150.5, Strategy: FULO
+            - Row 2 (Short ITM Call): Close at 0, Strategy: FUSH, Tradenote: A
+            - Row 3 (Long OTM Put): Close at 0, Strategy: FUSH
+            - Row 4 (Index Future): Close at 25500, Strategy: FUSH
+            - Row 5 (Long ITM Index Call): Close at 250 (intrinsic)
+            - Row 6 (Short ITM Index Put): Close at 200 (intrinsic)
+            
+            **Cash File (with Taxes):**
+            - Row 1: Buy 50,000 @ 150.5 (EQLO2)
+              - STT: ₹7,525 (0.1% of trade value)
+              - Stamp Duty: ₹1.51 (0.002% of trade value)
+            - Row 2: Buy 12,500 @ 100 (EQLO2)
+              - STT: ₹0 (short option, no tax)
+              - Stamp Duty: ₹0 (short option, no tax)
+            - Row 3: No cash trade (OTM)
+            - Rows 4-6: No cash trades (Index products)
             """)
             
             # Download sample files buttons
