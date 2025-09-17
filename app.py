@@ -326,16 +326,25 @@ class ExpiryTradeProcessor:
         - Net quantity (Buy quantity - Sell quantity)
         - Net consideration (positive for buy, negative for sell)
         - Total taxes per underlying
+        - Grand total row at the bottom
         
         Example output:
         ABC | Trade | Buy  | 1000 | 100 | +100,000 | 100 | 2 | 102
         ABC | Trade | Sell | 1500 | 105 | -157,500 | 0   | 0 | 0
-        ABC | NET   | NET  | -500 |     | -57,500  | 100 | 2 | 102
+        ABC | **NET DELIVERABLE** | NET  | -500 |     | -57,500  | 100 | 2 | 102
+        ---
+        GRAND TOTAL | | | | | -57,500 | 100 | 2 | 102
         """
         if cash_df.empty:
             return pd.DataFrame()
         
         summary_rows = []
+        
+        # Variables to track grand totals
+        grand_total_consideration = 0
+        grand_total_stt = 0
+        grand_total_stamp = 0
+        grand_total_taxes = 0
         
         # Group by underlying
         for underlying in cash_df['Underlying'].unique():
@@ -384,11 +393,17 @@ class ExpiryTradeProcessor:
             total_stamp = underlying_trades['Stamp Duty'].sum() if 'Stamp Duty' in underlying_trades.columns else 0
             total_taxes = underlying_trades['Taxes'].sum() if 'Taxes' in underlying_trades.columns else 0
             
-            # Add summary row
+            # Add to grand totals
+            grand_total_consideration += net_consideration
+            grand_total_stt += total_stt
+            grand_total_stamp += total_stamp
+            grand_total_taxes += total_taxes
+            
+            # Add NET DELIVERABLE row with special formatting
             summary_rows.append({
-                'Underlying': underlying,
-                'Type': 'NET DELIVERABLE',
-                'Buy/Sell': 'NET',
+                'Underlying': f'**{underlying}**',  # Bold formatting for net row
+                'Type': '**NET DELIVERABLE**',
+                'Buy/Sell': '**NET**',
                 'Quantity': net_qty,
                 'Price': '',  # No price for net row
                 'Consideration': round(net_consideration, 2),
@@ -411,6 +426,32 @@ class ExpiryTradeProcessor:
                     'Stamp Duty': '',
                     'Taxes': ''
                 })
+        
+        # Add separator before grand total
+        summary_rows.append({
+            'Underlying': '─' * 20,
+            'Type': '─' * 20,
+            'Buy/Sell': '─' * 10,
+            'Quantity': '─' * 10,
+            'Price': '─' * 10,
+            'Consideration': '─' * 10,
+            'STT': '─' * 10,
+            'Stamp Duty': '─' * 10,
+            'Taxes': '─' * 10
+        })
+        
+        # Add GRAND TOTAL row
+        summary_rows.append({
+            'Underlying': '**GRAND TOTAL**',
+            'Type': '**ALL POSITIONS**',
+            'Buy/Sell': '',
+            'Quantity': '',
+            'Price': '',
+            'Consideration': round(grand_total_consideration, 2),
+            'STT': round(grand_total_stt, 2),
+            'Stamp Duty': round(grand_total_stamp, 2),
+            'Taxes': round(grand_total_taxes, 2)
+        })
         
         # Create summary dataframe
         summary_df = pd.DataFrame(summary_rows)
@@ -993,29 +1034,45 @@ def main():
                     if 'cash_summary' in st.session_state and not st.session_state['cash_summary'].empty:
                         st.markdown("**Cash Summary by Underlying with Net Deliverables**")
                         
-                        # Show key metrics
+                        # Show key metrics - now using GRAND TOTAL row
                         summary_df = st.session_state['cash_summary']
-                        net_rows = summary_df[summary_df['Type'] == 'NET DELIVERABLE']
+                        grand_total_row = summary_df[summary_df['Underlying'] == '**GRAND TOTAL**']
                         
-                        if not net_rows.empty:
-                            col1, col2, col3 = st.columns(3)
+                        if not grand_total_row.empty:
+                            col1, col2, col3, col4 = st.columns(4)
                             with col1:
-                                total_consideration = net_rows['Consideration'].sum()
-                                st.metric("Total Net Consideration", f"₹{total_consideration:,.2f}")
+                                total_consideration = grand_total_row['Consideration'].values[0]
+                                st.metric("Grand Total Consideration", f"₹{total_consideration:,.2f}")
                             with col2:
-                                total_taxes = net_rows['Taxes'].sum()
-                                st.metric("Total Taxes (All Underlyings)", f"₹{total_taxes:,.2f}")
+                                total_stt = grand_total_row['STT'].values[0]
+                                st.metric("Grand Total STT", f"₹{total_stt:,.2f}")
                             with col3:
-                                net_deliverables = len(net_rows)
-                                st.metric("Unique Underlyings", net_deliverables)
+                                total_stamp = grand_total_row['Stamp Duty'].values[0]
+                                st.metric("Grand Total Stamp Duty", f"₹{total_stamp:,.2f}")
+                            with col4:
+                                total_taxes = grand_total_row['Taxes'].values[0]
+                                st.metric("Grand Total Taxes", f"₹{total_taxes:,.2f}")
                         
-                        st.info("💡 This file groups trades by underlying and shows net deliverable quantities with consideration")
+                        st.info("💡 This file groups trades by underlying, shows net deliverable quantities, and provides a grand total of all positions")
                         
-                        # Display the summary
+                        # Display the summary with custom styling
+                        # Create a styled version for display
+                        display_df = st.session_state['cash_summary'].copy()
+                        
+                        # Apply styling function for better visibility of NET rows
+                        def highlight_net_rows(row):
+                            if '**NET DELIVERABLE**' in str(row['Type']) or '**GRAND TOTAL**' in str(row['Underlying']):
+                                return ['background-color: #e8f4f8; font-weight: bold'] * len(row)
+                            elif '─' in str(row['Underlying']):
+                                return ['background-color: #f0f0f0'] * len(row)
+                            return [''] * len(row)
+                        
+                        styled_df = display_df.style.apply(highlight_net_rows, axis=1)
+                        
                         st.dataframe(
-                            st.session_state['cash_summary'],
+                            styled_df,
                             use_container_width=True,
-                            height=500
+                            height=600
                         )
                     else:
                         st.info("No cash summary generated (no cash trades)")
@@ -1043,10 +1100,15 @@ def main():
                     if 'cash_summary' in st.session_state and not st.session_state['cash_summary'].empty:
                         st.markdown("**Net Deliverable Positions Overview**")
                         
-                        # Extract net positions only
+                        # Extract net positions only (excluding grand total for charts)
                         net_positions = st.session_state['cash_summary'][
-                            st.session_state['cash_summary']['Type'] == 'NET DELIVERABLE'
+                            (st.session_state['cash_summary']['Type'] == '**NET DELIVERABLE**')
                         ].copy()
+                        
+                        # Get grand total row
+                        grand_total_row = st.session_state['cash_summary'][
+                            st.session_state['cash_summary']['Underlying'] == '**GRAND TOTAL**'
+                        ]
                         
                         if not net_positions.empty:
                             # Create visualizations
@@ -1054,8 +1116,10 @@ def main():
                             
                             with col1:
                                 st.markdown("**Net Quantities by Underlying**")
-                                quantities = net_positions.set_index('Underlying')['Quantity']
-                                # Color code positive (long) and negative (short)
+                                # Clean underlying names for chart (remove ** formatting)
+                                chart_positions = net_positions.copy()
+                                chart_positions['Underlying'] = chart_positions['Underlying'].str.replace('**', '')
+                                quantities = chart_positions.set_index('Underlying')['Quantity']
                                 st.bar_chart(quantities)
                                 
                                 # Show long vs short summary
@@ -1066,7 +1130,7 @@ def main():
                             
                             with col2:
                                 st.markdown("**Net Consideration by Underlying**")
-                                considerations = net_positions.set_index('Underlying')['Consideration']
+                                considerations = chart_positions.set_index('Underlying')['Consideration']
                                 st.bar_chart(considerations)
                                 
                                 # Show net money flow
@@ -1076,10 +1140,11 @@ def main():
                             
                             # Summary table
                             st.markdown("---")
-                            st.markdown("**Summary Table: Net Deliverables**")
+                            st.markdown("**Summary Table: Net Deliverables per Underlying**")
                             
-                            # Create a cleaner summary table
+                            # Create a cleaner summary table (without the formatting markers)
                             summary_table = net_positions[['Underlying', 'Quantity', 'Consideration', 'STT', 'Stamp Duty', 'Taxes']].copy()
+                            summary_table['Underlying'] = summary_table['Underlying'].str.replace('**', '')
                             summary_table['Position Type'] = summary_table['Quantity'].apply(
                                 lambda x: '🟢 Long' if x > 0 else '🔴 Short' if x < 0 else '⚪ Flat'
                             )
@@ -1121,21 +1186,33 @@ def main():
                                 }
                             )
                             
-                            # Grand totals
+                            # Grand totals - now from the GRAND TOTAL row
                             st.markdown("---")
-                            col1, col2, col3, col4 = st.columns(4)
-                            with col1:
-                                total_consideration = net_positions['Consideration'].sum()
-                                st.metric("Grand Total Consideration", f"₹{total_consideration:,.2f}")
-                            with col2:
-                                total_stt = net_positions['STT'].sum()
-                                st.metric("Grand Total STT", f"₹{total_stt:,.2f}")
-                            with col3:
-                                total_stamp = net_positions['Stamp Duty'].sum()
-                                st.metric("Grand Total Stamp Duty", f"₹{total_stamp:,.2f}")
-                            with col4:
-                                total_taxes = net_positions['Taxes'].sum()
-                                st.metric("Grand Total Taxes", f"₹{total_taxes:,.2f}")
+                            st.markdown("### 🎯 **GRAND TOTALS FOR ALL POSITIONS**")
+                            
+                            if not grand_total_row.empty:
+                                col1, col2, col3, col4 = st.columns(4)
+                                with col1:
+                                    total_consideration = grand_total_row['Consideration'].values[0]
+                                    st.metric("Grand Total Consideration", f"₹{total_consideration:,.2f}")
+                                with col2:
+                                    total_stt = grand_total_row['STT'].values[0]
+                                    st.metric("Grand Total STT", f"₹{total_stt:,.2f}")
+                                with col3:
+                                    total_stamp = grand_total_row['Stamp Duty'].values[0]
+                                    st.metric("Grand Total Stamp Duty", f"₹{total_stamp:,.2f}")
+                                with col4:
+                                    total_taxes = grand_total_row['Taxes'].values[0]
+                                    st.metric("Grand Total Taxes", f"₹{total_taxes:,.2f}")
+                                
+                                # Add breakdown info
+                                st.info(f"""
+                                💼 **Portfolio Summary:**
+                                - Total Underlyings: {len(net_positions)}
+                                - Net Consideration: ₹{total_consideration:,.2f}
+                                - Total Tax Burden: ₹{total_taxes:,.2f}
+                                - Effective Tax Rate: {(total_taxes / abs(total_consideration) * 100):.3f}% of consideration
+                                """)
                         else:
                             st.info("No net positions to display")
                     else:
