@@ -1,104 +1,4 @@
-with tab5:
-                    if 'cash_summary' in st.session_state and not st.session_state['cash_summary'].empty:
-                        st.markdown("**Net Deliverable Positions Overview**")
-                        
-                        # Extract net positions only
-                        net_positions = st.session_state['cash_summary'][
-                            st.session_state['cash_summary']['Type'] == 'NET DELIVERABLE'
-                        ].copy()
-                        
-                        if not net_positions.empty:
-                            # Create visualizations
-                            col1, col2 = st.columns(2)
-                            
-                            with col1:
-                                st.markdown("**Net Quantities by Underlying**")
-                                quantities = net_positions.set_index('Underlying')['Quantity']
-                                # Color code positive (long) and negative (short)
-                                st.bar_chart(quantities)
-                                
-                                # Show long vs short summary
-                                long_positions = net_positions[net_positions['Quantity'] > 0]
-                                short_positions = net_positions[net_positions['Quantity'] < 0]
-                                flat_positions = net_positions[net_positions['Quantity'] == 0]
-                                st.caption(f"Long: {len(long_positions)} | Short: {len(short_positions)} | Flat: {len(flat_positions)}")
-                            
-                            with col2:
-                                st.markdown("**Net Consideration by Underlying**")
-                                considerations = net_positions.set_index('Underlying')['Consideration']
-                                st.bar_chart(considerations)
-                                
-                                # Show net money flow
-                                net_inflow = net_positions[net_positions['Consideration'] > 0]['Consideration'].sum()
-                                net_outflow = abs(net_positions[net_positions['Consideration'] < 0]['Consideration'].sum())
-                                st.caption(f"Inflow: ₹{net_inflow:,.0f} | Outflow: ₹{net_outflow:,.0f}")
-                            
-                            # Summary table
-                            st.markdown("---")
-                            st.markdown("**Summary Table: Net Deliverables**")
-                            
-                            # Create a cleaner summary table
-                            summary_table = net_positions[['Underlying', 'Quantity', 'Consideration', 'STT', 'Stamp Duty', 'Taxes']].copy()
-                            summary_table['Position Type'] = summary_table['Quantity'].apply(
-                                lambda x: '🟢 Long' if x > 0 else '🔴 Short' if x < 0 else '⚪ Flat'
-                            )
-                            summary_table['Abs Quantity'] = summary_table['Quantity'].abs()
-                            
-                            # Reorder columns
-                            summary_table = summary_table[['Underlying', 'Position Type', 'Quantity', 'Abs Quantity', 
-                                                         'Consideration', 'STT', 'Stamp Duty', 'Taxes']]
-                            
-                            st.dataframe(
-                                summary_table,
-                                use_container_width=True,
-                                hide_index=True,
-                                column_config={
-                                    "Quantity": st.column_config.NumberColumn(
-                                        "Net Quantity",
-                                        format="%d",
-                                    ),
-                                    "Abs Quantity": st.column_config.NumberColumn(
-                                        "Absolute Qty",
-                                        format="%d",
-                                    ),
-                                    "Consideration": st.column_config.NumberColumn(
-                                        "Net Consideration",
-                                        format="₹%.2f",
-                                    ),
-                                    "STT": st.column_config.NumberColumn(
-                                        "Total STT",
-                                        format="₹%.2f",
-                                    ),
-                                    "Stamp Duty": st.column_config.NumberColumn(
-                                        "Total Stamp Duty",
-                                        format="₹%.2f",
-                                    ),
-                                    "Taxes": st.column_config.NumberColumn(
-                                        "Total Taxes",
-                                        format="₹%.2f",
-                                    ),
-                                }
-                            )
-                            
-                            # Grand totals
-                            st.markdown("---")
-                            col1, col2, col3, col4 = st.columns(4)
-                            with col1:
-                                total_consideration = net_positions['Consideration'].sum()
-                                st.metric("Grand Total Consideration", f"₹{total_consideration:,.2f}")
-                            with col2:
-                                total_stt = net_positions['STT'].sum()
-                                st.metric("Grand Total STT", f"₹{total_stt:,.2f}")
-                            with col3:
-                                total_stamp = net_positions['Stamp Duty'].sum()
-                                st.metric("Grand Total Stamp Duty", f"₹{total_stamp:,.2f}")
-                            with col4:
-                                total_taxes = net_positions['Taxes'].sum()
-                                st.metric("Grand Total Taxes", f"₹{total_taxes:,.2f}")
-                        else:
-                            st.info("No net positions to display")
-                    else:
-                        st.info("No cash trades to summarize")
+"""
 Expiry Trade Generator - Streamlit Web Application
 Automated Excel transformation for derivatives and cash trades with tax calculations
 
@@ -434,8 +334,6 @@ class ExpiryTradeProcessor:
         """
         if cash_df.empty:
             return pd.DataFrame()
-        if cash_df.empty:
-            return pd.DataFrame()
         
         summary_rows = []
         
@@ -637,18 +535,6 @@ def main():
             - ✅ **Trade notes** (A/E) for option assignments
             - ✅ **Universal strategy** (EQLO2) for all cash trades
             - ✅ **4 output files** with comprehensive reporting
-            - ✅ **Multi-format support** (Excel & CSV)
-            """)
-        
-        st.divider()
-        
-        with st.expander("✨ Key Features", expanded=True):
-            st.markdown("""
-            - ✅ **Automatic tax calculations** (STT & Stamp Duty)
-            - ✅ **Smart differentiation** between Index & Stock products
-            - ✅ **Physical delivery** processing for stocks
-            - ✅ **Trade notes** (A/E) for option assignments
-            - ✅ **Universal strategy** (EQLO2) for all cash trades
             - ✅ **Multi-format support** (Excel & CSV)
             """)
         
@@ -978,7 +864,6 @@ def main():
                     st.markdown('</div>', unsafe_allow_html=True)
                 
                 with col4:
-                with col4:
                     error_count = len(st.session_state['errors'])
                     if error_count > 0:
                         st.markdown('<div class="error-metric">', unsafe_allow_html=True)
@@ -1153,6 +1038,108 @@ def main():
                                 st.error(f"**Row {error['row_number']}** | {error['symbol']} | {error['reason']}")
                     else:
                         st.success("✅ All trades processed successfully with no errors!")
+                
+                with tab5:
+                    if 'cash_summary' in st.session_state and not st.session_state['cash_summary'].empty:
+                        st.markdown("**Net Deliverable Positions Overview**")
+                        
+                        # Extract net positions only
+                        net_positions = st.session_state['cash_summary'][
+                            st.session_state['cash_summary']['Type'] == 'NET DELIVERABLE'
+                        ].copy()
+                        
+                        if not net_positions.empty:
+                            # Create visualizations
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                st.markdown("**Net Quantities by Underlying**")
+                                quantities = net_positions.set_index('Underlying')['Quantity']
+                                # Color code positive (long) and negative (short)
+                                st.bar_chart(quantities)
+                                
+                                # Show long vs short summary
+                                long_positions = net_positions[net_positions['Quantity'] > 0]
+                                short_positions = net_positions[net_positions['Quantity'] < 0]
+                                flat_positions = net_positions[net_positions['Quantity'] == 0]
+                                st.caption(f"Long: {len(long_positions)} | Short: {len(short_positions)} | Flat: {len(flat_positions)}")
+                            
+                            with col2:
+                                st.markdown("**Net Consideration by Underlying**")
+                                considerations = net_positions.set_index('Underlying')['Consideration']
+                                st.bar_chart(considerations)
+                                
+                                # Show net money flow
+                                net_inflow = net_positions[net_positions['Consideration'] > 0]['Consideration'].sum()
+                                net_outflow = abs(net_positions[net_positions['Consideration'] < 0]['Consideration'].sum())
+                                st.caption(f"Inflow: ₹{net_inflow:,.0f} | Outflow: ₹{net_outflow:,.0f}")
+                            
+                            # Summary table
+                            st.markdown("---")
+                            st.markdown("**Summary Table: Net Deliverables**")
+                            
+                            # Create a cleaner summary table
+                            summary_table = net_positions[['Underlying', 'Quantity', 'Consideration', 'STT', 'Stamp Duty', 'Taxes']].copy()
+                            summary_table['Position Type'] = summary_table['Quantity'].apply(
+                                lambda x: '🟢 Long' if x > 0 else '🔴 Short' if x < 0 else '⚪ Flat'
+                            )
+                            summary_table['Abs Quantity'] = summary_table['Quantity'].abs()
+                            
+                            # Reorder columns
+                            summary_table = summary_table[['Underlying', 'Position Type', 'Quantity', 'Abs Quantity', 
+                                                         'Consideration', 'STT', 'Stamp Duty', 'Taxes']]
+                            
+                            st.dataframe(
+                                summary_table,
+                                use_container_width=True,
+                                hide_index=True,
+                                column_config={
+                                    "Quantity": st.column_config.NumberColumn(
+                                        "Net Quantity",
+                                        format="%d",
+                                    ),
+                                    "Abs Quantity": st.column_config.NumberColumn(
+                                        "Absolute Qty",
+                                        format="%d",
+                                    ),
+                                    "Consideration": st.column_config.NumberColumn(
+                                        "Net Consideration",
+                                        format="₹%.2f",
+                                    ),
+                                    "STT": st.column_config.NumberColumn(
+                                        "Total STT",
+                                        format="₹%.2f",
+                                    ),
+                                    "Stamp Duty": st.column_config.NumberColumn(
+                                        "Total Stamp Duty",
+                                        format="₹%.2f",
+                                    ),
+                                    "Taxes": st.column_config.NumberColumn(
+                                        "Total Taxes",
+                                        format="₹%.2f",
+                                    ),
+                                }
+                            )
+                            
+                            # Grand totals
+                            st.markdown("---")
+                            col1, col2, col3, col4 = st.columns(4)
+                            with col1:
+                                total_consideration = net_positions['Consideration'].sum()
+                                st.metric("Grand Total Consideration", f"₹{total_consideration:,.2f}")
+                            with col2:
+                                total_stt = net_positions['STT'].sum()
+                                st.metric("Grand Total STT", f"₹{total_stt:,.2f}")
+                            with col3:
+                                total_stamp = net_positions['Stamp Duty'].sum()
+                                st.metric("Grand Total Stamp Duty", f"₹{total_stamp:,.2f}")
+                            with col4:
+                                total_taxes = net_positions['Taxes'].sum()
+                                st.metric("Grand Total Taxes", f"₹{total_taxes:,.2f}")
+                        else:
+                            st.info("No net positions to display")
+                    else:
+                        st.info("No cash trades to summarize")
                 
                 # Reset button
                 st.markdown("---")
