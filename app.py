@@ -57,7 +57,7 @@ with tab2:
                             }
                         )
                     else:
-                        st.info("No cash trades generated")"""
+                        st.info("No cash trades generated")
 Expiry Trade Generator - Streamlit Web Application
 Automated Excel transformation for derivatives and cash trades with tax calculations
 
