@@ -1,4 +1,104 @@
-"""
+with tab5:
+                    if 'cash_summary' in st.session_state and not st.session_state['cash_summary'].empty:
+                        st.markdown("**Net Deliverable Positions Overview**")
+                        
+                        # Extract net positions only
+                        net_positions = st.session_state['cash_summary'][
+                            st.session_state['cash_summary']['Type'] == 'NET DELIVERABLE'
+                        ].copy()
+                        
+                        if not net_positions.empty:
+                            # Create visualizations
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                st.markdown("**Net Quantities by Underlying**")
+                                quantities = net_positions.set_index('Underlying')['Quantity']
+                                # Color code positive (long) and negative (short)
+                                st.bar_chart(quantities)
+                                
+                                # Show long vs short summary
+                                long_positions = net_positions[net_positions['Quantity'] > 0]
+                                short_positions = net_positions[net_positions['Quantity'] < 0]
+                                flat_positions = net_positions[net_positions['Quantity'] == 0]
+                                st.caption(f"Long: {len(long_positions)} | Short: {len(short_positions)} | Flat: {len(flat_positions)}")
+                            
+                            with col2:
+                                st.markdown("**Net Consideration by Underlying**")
+                                considerations = net_positions.set_index('Underlying')['Consideration']
+                                st.bar_chart(considerations)
+                                
+                                # Show net money flow
+                                net_inflow = net_positions[net_positions['Consideration'] > 0]['Consideration'].sum()
+                                net_outflow = abs(net_positions[net_positions['Consideration'] < 0]['Consideration'].sum())
+                                st.caption(f"Inflow: ₹{net_inflow:,.0f} | Outflow: ₹{net_outflow:,.0f}")
+                            
+                            # Summary table
+                            st.markdown("---")
+                            st.markdown("**Summary Table: Net Deliverables**")
+                            
+                            # Create a cleaner summary table
+                            summary_table = net_positions[['Underlying', 'Quantity', 'Consideration', 'STT', 'Stamp Duty', 'Taxes']].copy()
+                            summary_table['Position Type'] = summary_table['Quantity'].apply(
+                                lambda x: '🟢 Long' if x > 0 else '🔴 Short' if x < 0 else '⚪ Flat'
+                            )
+                            summary_table['Abs Quantity'] = summary_table['Quantity'].abs()
+                            
+                            # Reorder columns
+                            summary_table = summary_table[['Underlying', 'Position Type', 'Quantity', 'Abs Quantity', 
+                                                         'Consideration', 'STT', 'Stamp Duty', 'Taxes']]
+                            
+                            st.dataframe(
+                                summary_table,
+                                use_container_width=True,
+                                hide_index=True,
+                                column_config={
+                                    "Quantity": st.column_config.NumberColumn(
+                                        "Net Quantity",
+                                        format="%d",
+                                    ),
+                                    "Abs Quantity": st.column_config.NumberColumn(
+                                        "Absolute Qty",
+                                        format="%d",
+                                    ),
+                                    "Consideration": st.column_config.NumberColumn(
+                                        "Net Consideration",
+                                        format="₹%.2f",
+                                    ),
+                                    "STT": st.column_config.NumberColumn(
+                                        "Total STT",
+                                        format="₹%.2f",
+                                    ),
+                                    "Stamp Duty": st.column_config.NumberColumn(
+                                        "Total Stamp Duty",
+                                        format="₹%.2f",
+                                    ),
+                                    "Taxes": st.column_config.NumberColumn(
+                                        "Total Taxes",
+                                        format="₹%.2f",
+                                    ),
+                                }
+                            )
+                            
+                            # Grand totals
+                            st.markdown("---")
+                            col1, col2, col3, col4 = st.columns(4)
+                            with col1:
+                                total_consideration = net_positions['Consideration'].sum()
+                                st.metric("Grand Total Consideration", f"₹{total_consideration:,.2f}")
+                            with col2:
+                                total_stt = net_positions['STT'].sum()
+                                st.metric("Grand Total STT", f"₹{total_stt:,.2f}")
+                            with col3:
+                                total_stamp = net_positions['Stamp Duty'].sum()
+                                st.metric("Grand Total Stamp Duty", f"₹{total_stamp:,.2f}")
+                            with col4:
+                                total_taxes = net_positions['Taxes'].sum()
+                                st.metric("Grand Total Taxes", f"₹{total_taxes:,.2f}")
+                        else:
+                            st.info("No net positions to display")
+                    else:
+                        st.info("No cash trades to summarize")"""
 Expiry Trade Generator - Streamlit Web Application
 Automated Excel transformation for derivatives and cash trades with tax calculations
 
@@ -6,8 +106,15 @@ Features:
 - Process futures and options trades at expiry
 - Generate derivatives closing trades
 - Create cash trades with STT and Stamp Duty calculations
+- Generate cash summary with net deliverables by underlying
 - Handle index vs stock products differently
 - Export to Excel/CSV formats
+
+Output Files:
+1. Derivatives file with closing trades
+2. Cash file with physical delivery and taxes
+3. Cash summary with net positions by underlying
+4. Error log for processing issues
 """
 
 import streamlit as st
@@ -96,6 +203,12 @@ class ExpiryTradeProcessor:
     - Futures: STT @ 0.1%, Stamp Duty @ 0.002%
     - Long Options: STT @ 0.125% of intrinsic, Stamp Duty @ 0.003% of strike
     - Short Options: No taxes
+    
+    Generates 4 output files:
+    1. Derivatives: Closing trades with FULO/FUSH strategies
+    2. Cash: Physical delivery with EQLO2 strategy and taxes
+    3. Cash Summary: Net deliverables grouped by underlying
+    4. Errors: Processing issues log
     """
     
     @staticmethod
@@ -305,8 +418,108 @@ class ExpiryTradeProcessor:
         return derivative, cash
     
     @staticmethod
-    def process_dataframe(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-        """Process the entire dataframe"""
+    def generate_cash_summary(cash_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Generate cash summary with net deliverables by underlying
+        
+        Groups trades by underlying and adds summary rows showing:
+        - Net quantity (Buy quantity - Sell quantity)
+        - Net consideration (positive for buy, negative for sell)
+        - Total taxes per underlying
+        
+        Example output:
+        ABC | Trade | Buy  | 1000 | 100 | +100,000 | 100 | 2 | 102
+        ABC | Trade | Sell | 1500 | 105 | -157,500 | 0   | 0 | 0
+        ABC | NET   | NET  | -500 |     | -57,500  | 100 | 2 | 102
+        """
+        if cash_df.empty:
+            return pd.DataFrame()
+        
+        summary_rows = []
+        
+        # Group by underlying
+        for underlying in cash_df['Underlying'].unique():
+            underlying_trades = cash_df[cash_df['Underlying'] == underlying].copy()
+            
+            # Add consideration column for each trade
+            for idx, trade in underlying_trades.iterrows():
+                quantity = trade['Position']
+                price = trade['Price']
+                # Consideration is positive for buy, negative for sell
+                consideration = quantity * price if trade['Buy/Sell'] == 'Buy' else -quantity * price
+                
+                summary_rows.append({
+                    'Underlying': underlying,
+                    'Type': 'Trade',
+                    'Buy/Sell': trade['Buy/Sell'],
+                    'Quantity': quantity,
+                    'Price': price,
+                    'Consideration': round(consideration, 2),
+                    'STT': trade.get('STT', 0),
+                    'Stamp Duty': trade.get('Stamp Duty', 0),
+                    'Taxes': trade.get('Taxes', 0)
+                })
+            
+            # Calculate net deliverable for this underlying
+            buy_trades = underlying_trades[underlying_trades['Buy/Sell'] == 'Buy']
+            sell_trades = underlying_trades[underlying_trades['Buy/Sell'] == 'Sell']
+            
+            buy_qty = buy_trades['Position'].sum() if not buy_trades.empty else 0
+            sell_qty = sell_trades['Position'].sum() if not sell_trades.empty else 0
+            net_qty = buy_qty - sell_qty
+            
+            # Calculate net consideration
+            buy_consideration = sum(
+                row['Position'] * row['Price'] 
+                for _, row in buy_trades.iterrows()
+            ) if not buy_trades.empty else 0
+            sell_consideration = sum(
+                row['Position'] * row['Price'] 
+                for _, row in sell_trades.iterrows()
+            ) if not sell_trades.empty else 0
+            net_consideration = buy_consideration - sell_consideration
+            
+            # Sum taxes - check if columns exist
+            total_stt = underlying_trades['STT'].sum() if 'STT' in underlying_trades.columns else 0
+            total_stamp = underlying_trades['Stamp Duty'].sum() if 'Stamp Duty' in underlying_trades.columns else 0
+            total_taxes = underlying_trades['Taxes'].sum() if 'Taxes' in underlying_trades.columns else 0
+            
+            # Add summary row
+            summary_rows.append({
+                'Underlying': underlying,
+                'Type': 'NET DELIVERABLE',
+                'Buy/Sell': 'NET',
+                'Quantity': net_qty,
+                'Price': '',  # No price for net row
+                'Consideration': round(net_consideration, 2),
+                'STT': round(total_stt, 2),
+                'Stamp Duty': round(total_stamp, 2),
+                'Taxes': round(total_taxes, 2)
+            })
+            
+            # Add blank row for separation between underlyings
+            # (only if not the last underlying)
+            if underlying != cash_df['Underlying'].unique()[-1]:
+                summary_rows.append({
+                    'Underlying': '',
+                    'Type': '',
+                    'Buy/Sell': '',
+                    'Quantity': '',
+                    'Price': '',
+                    'Consideration': '',
+                    'STT': '',
+                    'Stamp Duty': '',
+                    'Taxes': ''
+                })
+        
+        # Create summary dataframe
+        summary_df = pd.DataFrame(summary_rows)
+        
+        return summary_df
+    
+    @staticmethod
+    def process_dataframe(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+        """Process the entire dataframe and generate all output files"""
         derivatives = []
         cash_trades = []
         errors = []
@@ -354,7 +567,10 @@ class ExpiryTradeProcessor:
         cash_df = pd.DataFrame(cash_trades) if cash_trades else pd.DataFrame()
         errors_df = pd.DataFrame(errors) if errors else pd.DataFrame()
         
-        return derivatives_df, cash_df, errors_df
+        # Generate cash summary with net deliverables
+        cash_summary_df = ExpiryTradeProcessor.generate_cash_summary(cash_df)
+        
+        return derivatives_df, cash_df, cash_summary_df, errors_df
 
 def convert_df_to_excel(df: pd.DataFrame) -> bytes:
     """Convert dataframe to Excel bytes for download"""
@@ -375,6 +591,8 @@ def main():
     # Initialize session state
     if 'processed' not in st.session_state:
         st.session_state['processed'] = False
+    if 'cash_summary' not in st.session_state:
+        st.session_state['cash_summary'] = pd.DataFrame()
     
     # Sidebar for instructions
     with st.sidebar:
@@ -400,16 +618,23 @@ def main():
            - Strategy: EQLO2 (all trades)
            - Includes: STT, Stamp Duty, Total Taxes
            - No index products
-        3. **Errors**: Processing issues
+        3. **Cash Summary**: Net deliverables by underlying
+           - Groups trades by underlying
+           - Shows net quantity (Buy - Sell)
+           - Net consideration with direction
+           - Aggregates taxes per underlying
+        4. **Errors**: Processing issues
         """)
         
         with st.expander("✨ Key Features", expanded=True):
             st.markdown("""
             - ✅ **Automatic tax calculations** (STT & Stamp Duty)
+            - ✅ **Net deliverable summary** by underlying
             - ✅ **Smart differentiation** between Index & Stock products
             - ✅ **Physical delivery** processing for stocks
             - ✅ **Trade notes** (A/E) for option assignments
             - ✅ **Universal strategy** (EQLO2) for all cash trades
+            - ✅ **4 output files** with comprehensive reporting
             - ✅ **Multi-format support** (Excel & CSV)
             """)
         
@@ -458,6 +683,38 @@ def main():
         - Index: Cash settled, no physical delivery
         - Stock: Physical delivery with taxes
         """)
+        
+        with st.expander("📋 Cash Summary File Details"):
+            st.markdown("""
+            ### Net Deliverables by Underlying
+            
+            The Cash Summary file provides:
+            
+            **For each underlying:**
+            - Individual cash trade rows
+            - NET DELIVERABLE summary row
+            
+            **Columns:**
+            - **Underlying**: Stock name
+            - **Type**: Trade or NET DELIVERABLE
+            - **Buy/Sell**: Buy/Sell/NET
+            - **Quantity**: Trade quantity
+            - **Price**: Execution price (blank for NET)
+            - **Consideration**: Trade value
+              - Positive for Buy trades
+              - Negative for Sell trades
+              - Net for summary row
+            - **STT, Stamp Duty, Taxes**: Aggregated per underlying
+            
+            **Example:**
+            ```
+            ABC | Trade | Buy  | 1000 | 100 | +100,000 | 100 | 2 | 102
+            ABC | Trade | Sell | 1500 | 105 | -157,500 | 0   | 0 | 0
+            ABC | NET   | NET  | -500 |     | -57,500  | 100 | 2 | 102
+            ```
+            
+            This helps identify net delivery obligations!
+            """)
         
         with st.expander("💰 Tax Calculation Details"):
             st.markdown("""
@@ -613,11 +870,12 @@ def main():
                     with st.spinner("Processing trades..."):
                         # Process the data
                         processor = ExpiryTradeProcessor()
-                        derivatives_df, cash_df, errors_df = processor.process_dataframe(df)
+                        derivatives_df, cash_df, cash_summary_df, errors_df = processor.process_dataframe(df)
                         
                         # Store in session state
                         st.session_state['derivatives'] = derivatives_df
                         st.session_state['cash'] = cash_df
+                        st.session_state['cash_summary'] = cash_summary_df
                         st.session_state['errors'] = errors_df
                         st.session_state['processed'] = True
                     
@@ -628,8 +886,8 @@ def main():
                 st.markdown("---")
                 st.markdown("### 📊 Processing Results")
                 
-                # Results summary with download buttons
-                col1, col2, col3 = st.columns(3)
+                # Results summary with download buttons - Now 4 files
+                col1, col2, col3, col4 = st.columns(4)
                 
                 with col1:
                     st.markdown('<div class="info-metric">', unsafe_allow_html=True)
@@ -692,6 +950,33 @@ def main():
                     st.markdown('</div>', unsafe_allow_html=True)
                 
                 with col3:
+                    st.markdown('<div class="info-metric">', unsafe_allow_html=True)
+                    st.markdown("**Cash Summary**")
+                    
+                    if 'cash_summary' in st.session_state and not st.session_state['cash_summary'].empty:
+                        st.metric("", f"{len(st.session_state['cash_summary'])} rows", label_visibility="collapsed")
+                        
+                        # Count unique underlyings
+                        unique_underlyings = st.session_state['cash_summary'][
+                            st.session_state['cash_summary']['Type'] == 'NET DELIVERABLE'
+                        ]['Underlying'].nunique()
+                        st.caption(f"Underlyings: {unique_underlyings}")
+                        
+                        excel_data = convert_df_to_excel(st.session_state['cash_summary'])
+                        st.download_button(
+                            label="📋 Download Net Deliverables",
+                            data=excel_data,
+                            file_name='expiry_trades_cash_summary.xlsx',
+                            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                            use_container_width=True
+                        )
+                    else:
+                        st.metric("", "0 rows", label_visibility="collapsed")
+                        st.warning("No cash summary generated")
+                    st.markdown('</div>', unsafe_allow_html=True)
+                
+                with col4:
+                with col4:
                     error_count = len(st.session_state['errors'])
                     if error_count > 0:
                         st.markdown('<div class="error-metric">', unsafe_allow_html=True)
@@ -718,14 +1003,14 @@ def main():
                 st.markdown("---")
                 col1, col2, col3 = st.columns([2, 3, 2])
                 with col2:
-                    st.info("✅ All files are ready for download using the buttons above")
+                    st.success("✅ All 4 files are ready for download using the buttons above")
                 
                 # Detailed views
                 st.markdown("---")
                 st.markdown("### 📋 Detailed Views")
                 
                 # Tabs for detailed data
-                tab1, tab2, tab3 = st.tabs(["📈 Derivatives", "💰 Cash", "⚠️ Errors"])
+                tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Derivatives", "💰 Cash", "📋 Cash Summary", "⚠️ Errors", "📊 Net Positions"])
                 
                 with tab1:
                     if not st.session_state['derivatives'].empty:
@@ -818,6 +1103,37 @@ def main():
                         st.info("No cash trades generated")
                 
                 with tab3:
+                    if 'cash_summary' in st.session_state and not st.session_state['cash_summary'].empty:
+                        st.markdown("**Cash Summary by Underlying with Net Deliverables**")
+                        
+                        # Show key metrics
+                        summary_df = st.session_state['cash_summary']
+                        net_rows = summary_df[summary_df['Type'] == 'NET DELIVERABLE']
+                        
+                        if not net_rows.empty:
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                total_consideration = net_rows['Consideration'].sum()
+                                st.metric("Total Net Consideration", f"₹{total_consideration:,.2f}")
+                            with col2:
+                                total_taxes = net_rows['Taxes'].sum()
+                                st.metric("Total Taxes (All Underlyings)", f"₹{total_taxes:,.2f}")
+                            with col3:
+                                net_deliverables = len(net_rows)
+                                st.metric("Unique Underlyings", net_deliverables)
+                        
+                        st.info("💡 This file groups trades by underlying and shows net deliverable quantities with consideration")
+                        
+                        # Display the summary
+                        st.dataframe(
+                            st.session_state['cash_summary'],
+                            use_container_width=True,
+                            height=500
+                        )
+                    else:
+                        st.info("No cash summary generated (no cash trades)")
+                
+                with tab4:
                     if not st.session_state['errors'].empty:
                         st.error(f"Found {len(st.session_state['errors'])} errors during processing")
                         
@@ -885,7 +1201,7 @@ def main():
             st.markdown("""
             <div style='background-color: #e8f5e9; padding: 20px; border-radius: 10px; height: 200px;'>
                 <h4 style='color: #4caf50;'>3️⃣ Download</h4>
-                <p>Get your files with proper formatting and automatic tax calculations</p>
+                <p>Get 4 output files: Derivatives, Cash, Cash Summary & Errors</p>
             </div>
             """, unsafe_allow_html=True)
         
@@ -924,6 +1240,11 @@ def main():
               - Stamp Duty: ₹0 (short option, no tax)
             - Row 3: No cash trade (OTM)
             - Rows 4-6: No cash trades (Index products)
+            
+            **Cash Summary File:**
+            - Groups by underlying (ABC, XYZ)
+            - Shows individual trades plus NET DELIVERABLE rows
+            - Net quantities and consideration per underlying
             """)
             
             # Download sample files buttons
