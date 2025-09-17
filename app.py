@@ -1,4 +1,14 @@
-"""
+with tab2:
+                    if not st.session_state['cash'].empty:
+                        # Show summary statistics
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.markdown("**Buy/Sell Distribution**")
+                            buysell_counts = st.session_state['cash']['Buy/Sell'].value_counts()
+                            st.bar_chart(buysell_counts)
+                        with col2:
+                            st.markdown("**Top Underlyings by Position**")
+                            position_sum = st.session_state['cash"""
 Expiry Trade Generator - Streamlit Web Application
 Automated Excel transformation for derivatives and cash trades with tax calculations
 
@@ -202,6 +212,7 @@ class ExpiryTradeProcessor:
                 'Type': 'CASH',
                 'Strike': '',
                 'Lot Size': '',
+                'tradenotes': '',  # Blank for futures
                 'STT': round(stt, 2),  # Round to 2 decimal places for currency
                 'Stamp Duty': round(stamp_duty, 2),
                 'Taxes': round(taxes, 2)
@@ -299,6 +310,11 @@ class ExpiryTradeProcessor:
             # Total Taxes
             taxes = stt + stamp_duty
             
+            # Determine tradenotes for cash position based on ORIGINAL option position
+            # Long option (original position > 0) = Exercise = "E" (regardless of call/put)
+            # Short option (original position < 0) = Assignment = "A" (regardless of call/put)
+            cash_tradenotes = 'E' if position > 0 else 'A'
+            
             cash = {
                 'Underlying': row['Underlying'],
                 'Symbol': row['Underlying'],
@@ -310,6 +326,7 @@ class ExpiryTradeProcessor:
                 'Type': 'CASH',
                 'Strike': '',
                 'Lot Size': '',
+                'tradenotes': cash_tradenotes,  # E for exercise (long options), A for assignment (short options)
                 'STT': round(stt, 2),  # Round to 2 decimal places for currency
                 'Stamp Duty': round(stamp_duty, 2),
                 'Taxes': round(taxes, 2)
@@ -598,10 +615,15 @@ def main():
         **Cash Strategy:**
         - EQLO2: All cash trades (universal)
         
-        **Trade Notes (Stock Options Only):**
+        **Trade Notes in Derivatives:**
         - A: ITM stock option buy (assignment)
         - E: ITM stock option sell (exercise)
         - Blank: Futures/OTM/Index products
+        
+        **Trade Notes in Cash:**
+        - E: Exercise (from long options, position > 0)
+        - A: Assignment (from short options, position < 0)
+        - Blank: Futures-driven cash trades
         
         **Tax Columns in Cash File:**
         - STT: Securities Transaction Tax
@@ -707,15 +729,24 @@ def main():
             - Cash: NO trades (cash settled)
             - tradenotes: Always blank (no physical delivery)
             
-            **Trade Notes Column:**
+            **Trade Notes Column in Derivatives:**
             - ITM Stock Buy trades: "A" (Assignment)
             - ITM Stock Sell trades: "E" (Exercise)
             - Index Options: Always blank
             - All Futures: Always blank
             - OTM Options: Always blank
             
+            **Trade Notes Column in Cash:**
+            - Long Options (position > 0): "E" (Exercise)
+              - Long Call → Exercise → Buy stock → tradenotes = "E"
+              - Long Put → Exercise → Sell stock → tradenotes = "E"
+            - Short Options (position < 0): "A" (Assignment)
+              - Short Call → Assignment → Sell stock → tradenotes = "A"
+              - Short Put → Assignment → Buy stock → tradenotes = "A"
+            - Futures: Always blank
+            
             **Cash File Rules (Stocks Only):**
-            - Stock Futures: Matching position at last price
+            - Stock Futures: Matching position at last price (tradenotes blank)
             - ITM Stock Calls: Buy at Strike (long) / Sell at Strike (short)
             - ITM Stock Puts: Sell at Strike (long) / Buy at Strike (short)
             - **ALL trades use strategy: EQLO2**
@@ -996,7 +1027,7 @@ def main():
                             position_sum = st.session_state['cash'].groupby('Underlying')['Position'].sum().sort_values(ascending=False).head(10)
                             st.bar_chart(position_sum)
                         with col3:
-                            st.markdown("**Tax Summary**")
+                            st.markdown("**Tax Summary & Trade Notes**")
                             if 'Taxes' in st.session_state['cash'].columns:
                                 total_stt = st.session_state['cash']['STT'].sum()
                                 total_stamp = st.session_state['cash']['Stamp Duty'].sum()
@@ -1004,20 +1035,28 @@ def main():
                                 st.metric("Total STT", f"₹{total_stt:,.2f}")
                                 st.metric("Total Stamp Duty", f"₹{total_stamp:,.2f}")
                                 st.metric("Total Taxes", f"₹{total_taxes:,.2f}")
+                            
+                            # Show tradenotes distribution if exists
+                            if 'tradenotes' in st.session_state['cash'].columns:
+                                tn_counts = st.session_state['cash']['tradenotes'].value_counts()
+                                exercise_count = tn_counts.get('E', 0)
+                                assignment_count = tn_counts.get('A', 0)
+                                futures_count = len(st.session_state['cash'][st.session_state['cash']['tradenotes'] == ''])
+                                st.caption(f"Exercise (E): {exercise_count} | Assignment (A): {assignment_count} | Futures: {futures_count}")
                         
                         # Note about strategy and taxes
                         col1, col2 = st.columns(2)
                         with col1:
                             st.success("✅ All cash trades use universal strategy: **EQLO2**")
                         with col2:
-                            st.info("💰 Taxes calculated as per exchange rules for physical delivery")
+                            st.info("💰 Trade Notes: E=Exercise (long options), A=Assignment (short options), Blank=Futures")
                         
-                        st.markdown("**Full Cash Data with Tax Details**")
-                        # Display with proper column order including taxes
+                        st.markdown("**Full Cash Data with Tax Details and Trade Notes**")
+                        # Display with proper column order including taxes and tradenotes
                         if 'STT' in st.session_state['cash'].columns:
                             display_columns = ['Underlying', 'Symbol', 'Expiry', 'Buy/Sell', 
                                              'Strategy', 'Position', 'Price', 'Type', 
-                                             'Strike', 'Lot Size', 'STT', 'Stamp Duty', 'Taxes']
+                                             'Strike', 'Lot Size', 'tradenotes', 'STT', 'Stamp Duty', 'Taxes']
                             display_df = st.session_state['cash'][display_columns]
                         else:
                             display_df = st.session_state['cash']
@@ -1025,7 +1064,13 @@ def main():
                         st.dataframe(
                             display_df,
                             use_container_width=True,
-                            height=400
+                            height=400,
+                            column_config={
+                                "tradenotes": st.column_config.TextColumn(
+                                    "Trade Notes",
+                                    help="E=Exercise (long options), A=Assignment (short options), Blank=Futures"
+                                )
+                            }
                         )
                     else:
                         st.info("No cash trades generated")
@@ -1036,7 +1081,7 @@ def main():
                         
                         # Show key metrics - now using GRAND TOTAL row
                         summary_df = st.session_state['cash_summary']
-                        grand_total_row = summary_df[summary_df['Underlying'] == '**GRAND TOTAL**']
+                        grand_total_row = summary_df[summary_df['Underlying'] == 'GRAND TOTAL']
                         
                         if not grand_total_row.empty:
                             col1, col2, col3, col4 = st.columns(4)
@@ -1056,23 +1101,32 @@ def main():
                         st.info("💡 This file groups trades by underlying, shows net deliverable quantities, and provides a grand total of all positions")
                         
                         # Display the summary with custom styling
-                        # Create a styled version for display
-                        display_df = st.session_state['cash_summary'].copy()
-                        
                         # Apply styling function for better visibility of NET rows
-                        def highlight_net_rows(row):
-                            if '**NET DELIVERABLE**' in str(row['Type']) or '**GRAND TOTAL**' in str(row['Underlying']):
-                                return ['background-color: #e8f4f8; font-weight: bold'] * len(row)
+                        def style_summary_rows(row):
+                            if 'NET DELIVERABLE' in str(row['Type']) or 'GRAND TOTAL' in str(row['Underlying']):
+                                return ['font-weight: bold; background-color: #e8f4f8;'] * len(row)
+                            elif 'ALL POSITIONS' in str(row['Type']):
+                                return ['font-weight: bold; background-color: #e8f4f8;'] * len(row)
                             elif '─' in str(row['Underlying']):
-                                return ['background-color: #f0f0f0'] * len(row)
+                                return ['background-color: #f0f0f0; font-size: 8px;'] * len(row)
                             return [''] * len(row)
                         
-                        styled_df = display_df.style.apply(highlight_net_rows, axis=1)
+                        # Apply conditional formatting to numeric columns
+                        styled_df = summary_df.style.apply(style_summary_rows, axis=1)\
+                            .format({
+                                'Quantity': lambda x: f'{x:,.0f}' if x != '' and pd.notna(x) else '',
+                                'Price': lambda x: f'{x:.2f}' if x != '' and pd.notna(x) else '',
+                                'Consideration': lambda x: f'₹{x:,.2f}' if x != '' and pd.notna(x) else '',
+                                'STT': lambda x: f'₹{x:,.2f}' if x != '' and pd.notna(x) else '',
+                                'Stamp Duty': lambda x: f'₹{x:,.2f}' if x != '' and pd.notna(x) else '',
+                                'Taxes': lambda x: f'₹{x:,.2f}' if x != '' and pd.notna(x) else ''
+                            })
                         
                         st.dataframe(
                             styled_df,
                             use_container_width=True,
-                            height=600
+                            height=600,
+                            hide_index=True
                         )
                     else:
                         st.info("No cash summary generated (no cash trades)")
@@ -1102,12 +1156,12 @@ def main():
                         
                         # Extract net positions only (excluding grand total for charts)
                         net_positions = st.session_state['cash_summary'][
-                            (st.session_state['cash_summary']['Type'] == '**NET DELIVERABLE**')
+                            st.session_state['cash_summary']['Type'] == 'NET DELIVERABLE'
                         ].copy()
                         
                         # Get grand total row
                         grand_total_row = st.session_state['cash_summary'][
-                            st.session_state['cash_summary']['Underlying'] == '**GRAND TOTAL**'
+                            st.session_state['cash_summary']['Underlying'] == 'GRAND TOTAL'
                         ]
                         
                         if not net_positions.empty:
@@ -1116,10 +1170,7 @@ def main():
                             
                             with col1:
                                 st.markdown("**Net Quantities by Underlying**")
-                                # Clean underlying names for chart (remove ** formatting)
-                                chart_positions = net_positions.copy()
-                                chart_positions['Underlying'] = chart_positions['Underlying'].str.replace('**', '')
-                                quantities = chart_positions.set_index('Underlying')['Quantity']
+                                quantities = net_positions.set_index('Underlying')['Quantity']
                                 st.bar_chart(quantities)
                                 
                                 # Show long vs short summary
@@ -1130,7 +1181,7 @@ def main():
                             
                             with col2:
                                 st.markdown("**Net Consideration by Underlying**")
-                                considerations = chart_positions.set_index('Underlying')['Consideration']
+                                considerations = net_positions.set_index('Underlying')['Consideration']
                                 st.bar_chart(considerations)
                                 
                                 # Show net money flow
@@ -1142,9 +1193,8 @@ def main():
                             st.markdown("---")
                             st.markdown("**Summary Table: Net Deliverables per Underlying**")
                             
-                            # Create a cleaner summary table (without the formatting markers)
+                            # Create a cleaner summary table
                             summary_table = net_positions[['Underlying', 'Quantity', 'Consideration', 'STT', 'Stamp Duty', 'Taxes']].copy()
-                            summary_table['Underlying'] = summary_table['Underlying'].str.replace('**', '')
                             summary_table['Position Type'] = summary_table['Quantity'].apply(
                                 lambda x: '🟢 Long' if x > 0 else '🔴 Short' if x < 0 else '⚪ Flat'
                             )
@@ -1206,12 +1256,17 @@ def main():
                                     st.metric("Grand Total Taxes", f"₹{total_taxes:,.2f}")
                                 
                                 # Add breakdown info
+                                if abs(total_consideration) > 0:
+                                    effective_tax_rate = (total_taxes / abs(total_consideration) * 100)
+                                else:
+                                    effective_tax_rate = 0
+                                
                                 st.info(f"""
                                 💼 **Portfolio Summary:**
                                 - Total Underlyings: {len(net_positions)}
                                 - Net Consideration: ₹{total_consideration:,.2f}
                                 - Total Tax Burden: ₹{total_taxes:,.2f}
-                                - Effective Tax Rate: {(total_taxes / abs(total_consideration) * 100):.3f}% of consideration
+                                - Effective Tax Rate: {effective_tax_rate:.3f}% of consideration
                                 """)
                         else:
                             st.info("No net positions to display")
@@ -1290,18 +1345,18 @@ def main():
             **Expected Output for Sample Data:**
             
             **Derivatives File:**
-            - Row 1 (Stock Future): Close at 150.5, Strategy: FULO
-            - Row 2 (Short ITM Call): Close at 0, Strategy: FUSH, Tradenote: A
-            - Row 3 (Long OTM Put): Close at 0, Strategy: FUSH
-            - Row 4 (Index Future): Close at 25500, Strategy: FUSH
-            - Row 5 (Long ITM Index Call): Close at 250 (intrinsic)
-            - Row 6 (Short ITM Index Put): Close at 200 (intrinsic)
+            - Row 1 (Stock Future): Close at 150.5, Strategy: FULO, Tradenotes: blank
+            - Row 2 (Short ITM Call): Close at 0, Strategy: FUSH, Tradenotes: A
+            - Row 3 (Long OTM Put): Close at 0, Strategy: FUSH, Tradenotes: blank
+            - Row 4 (Index Future): Close at 25500, Strategy: FUSH, Tradenotes: blank
+            - Row 5 (Long ITM Index Call): Close at 250 (intrinsic), Tradenotes: blank
+            - Row 6 (Short ITM Index Put): Close at 200 (intrinsic), Tradenotes: blank
             
-            **Cash File (with Taxes):**
-            - Row 1: Buy 50,000 @ 150.5 (EQLO2)
+            **Cash File (with Taxes and Trade Notes):**
+            - Row 1: Buy 50,000 @ 150.5 (EQLO2), Tradenotes: blank (futures)
               - STT: ₹7,525 (0.1% of trade value)
               - Stamp Duty: ₹1.51 (0.002% of trade value)
-            - Row 2: Buy 12,500 @ 100 (EQLO2)
+            - Row 2: Buy 12,500 @ 100 (EQLO2), Tradenotes: A (short call assigned)
               - STT: ₹0 (short option, no tax)
               - Stamp Duty: ₹0 (short option, no tax)
             - Row 3: No cash trade (OTM)
@@ -1311,6 +1366,7 @@ def main():
             - Groups by underlying (ABC, XYZ)
             - Shows individual trades plus NET DELIVERABLE rows
             - Net quantities and consideration per underlying
+            - Grand total row with all positions combined
             """)
             
             # Download sample files buttons
