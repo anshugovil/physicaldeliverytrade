@@ -83,6 +83,13 @@ from datetime import datetime
 import io
 from typing import Tuple, List, Dict
 
+import streamlit as st
+import pandas as pd
+import numpy as np
+from datetime import datetime
+import io
+from typing import Tuple, List, Dict
+
 # Page configuration
 st.set_page_config(
     page_title="Expiry Trade Generator",
@@ -92,7 +99,7 @@ st.set_page_config(
 )
 
 # Custom CSS for better UI - Professional light theme
-st.markdown("""
+css_style = """
 <style>
     .main {
         padding-top: 2rem;
@@ -152,7 +159,9 @@ st.markdown("""
         background-color: #f8f9fa;
     }
 </style>
-""", unsafe_allow_html=True)
+"""
+
+st.markdown(css_style, unsafe_allow_html=True)
 
 class ExpiryTradeProcessor:
     """
