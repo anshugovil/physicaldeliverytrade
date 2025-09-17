@@ -1,527 +1,638 @@
 """
-Portfolio Synthetic Call Transformer
-A Streamlit application for transforming portfolio positions into synthetic calls
+Expiry Trade Generator - Streamlit Web Application
+Automated Excel transformation for derivatives and cash trades
 """
 
 import streamlit as st
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
+import numpy as np
 from datetime import datetime
+import io
+from typing import Tuple, List, Dict
+# Note: No plotly import needed - using Streamlit's native charts
 
 # Page configuration
 st.set_page_config(
-    page_title="Portfolio Synthetic Call Transformer",
+    page_title="Expiry Trade Generator",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for better styling
+# Custom CSS for better UI - Professional light theme
 st.markdown("""
-    <style>
+<style>
     .main {
-        padding: 0rem 1rem;
+        padding-top: 2rem;
     }
     .stButton>button {
-        background-color: #4CAF50;
-        color: white;
+        width: 100%;
         border-radius: 5px;
-        padding: 0.5rem 1rem;
-        border: none;
-        transition: 0.3s;
+        height: 3em;
+        font-weight: 500;
     }
-    .stButton>button:hover {
-        background-color: #45a049;
-    }
-    .success-box {
-        padding: 1rem;
-        border-radius: 0.5rem;
+    .success-metric {
         background-color: #d4edda;
-        border: 1px solid #c3e6cb;
-        color: #155724;
-        margin: 1rem 0;
+        border-left: 4px solid #28a745;
+        padding: 12px;
+        border-radius: 5px;
+        margin: 10px 0;
     }
-    .info-box {
-        padding: 1rem;
-        border-radius: 0.5rem;
+    .error-metric {
+        background-color: #f8d7da;
+        border-left: 4px solid #dc3545;
+        padding: 12px;
+        border-radius: 5px;
+        margin: 10px 0;
+    }
+    .info-metric {
         background-color: #d1ecf1;
-        border: 1px solid #bee5eb;
-        color: #0c5460;
-        margin: 1rem 0;
+        border-left: 4px solid #17a2b8;
+        padding: 12px;
+        border-radius: 5px;
+        margin: 10px 0;
     }
-    .warning-box {
-        padding: 1rem;
-        border-radius: 0.5rem;
+    .warning-metric {
         background-color: #fff3cd;
-        border: 1px solid #ffeaa7;
-        color: #856404;
-        margin: 1rem 0;
+        border-left: 4px solid #ffc107;
+        padding: 12px;
+        border-radius: 5px;
+        margin: 10px 0;
     }
-    </style>
-    """, unsafe_allow_html=True)
-
-def load_sample_data():
-    """Create sample data for demonstration"""
-    data = {
-        'Instrument': ['Futures', 'Cash', 'Puts', 'Puts', 'Puts', 'Puts', 'Puts', 'Calls', 'Calls', 'Calls'],
-        'Position': [100000, 200000, 5000, 10000, 100000, 100000, 100000, 100000, 11000, 11000],
-        'Strike': [None, None, 1240, 1230, 1200, 1150, 1100, 1200, 1250, 1150],
-        'Market price': [1191, 1190, 60, 65, 25, 8, 4, 12, 4, 62]
+    h1 {
+        color: #2c3e50;
+        font-weight: 600;
+        border-bottom: 3px solid #3498db;
+        padding-bottom: 10px;
     }
-    df = pd.DataFrame(data)
-    return df
+    h2 {
+        color: #34495e;
+        font-weight: 500;
+    }
+    h3 {
+        color: #34495e;
+        font-weight: 500;
+    }
+    .uploadedFile {
+        border: 2px dashed #3498db !important;
+        border-radius: 10px;
+        padding: 20px;
+        background-color: #f8f9fa;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-def process_portfolio(df):
-    """
-    Process the portfolio to create synthetic calls
-    """
-    # Clean column names - remove leading/trailing spaces
-    df.columns = df.columns.str.strip()
+class ExpiryTradeProcessor:
+    """Main processor class for expiry trades"""
     
-    # Check required columns
-    required_columns = ['Instrument', 'Position', 'Strike', 'Market price']
-    missing_columns = [col for col in required_columns if col not in df.columns]
-    
-    if missing_columns:
-        st.error(f"Missing required columns: {missing_columns}")
-        st.info(f"Found columns: {df.columns.tolist()}")
-        return None, None, None
-    
-    # Standardize instrument names
-    df['Instrument'] = df['Instrument'].str.strip().str.lower()
-    
-    # Separate instruments by type
-    futures = df[df['Instrument'] == 'futures'].copy()
-    cash = df[df['Instrument'] == 'cash'].copy()
-    puts = df[df['Instrument'].str.contains('put', case=False)].copy()
-    calls = df[df['Instrument'].str.contains('call', case=False)].copy()
-    
-    # Get underlying price (use futures price if available, otherwise cash)
-    if not futures.empty:
-        underlying_price = futures['Market price'].iloc[0]
-    elif not cash.empty:
-        underlying_price = cash['Market price'].iloc[0]
-    else:
-        st.error("No underlying price found (need Futures or Cash position)")
-        return None, None, None
-    
-    # Calculate total stock positions
-    total_futures = futures['Position'].sum() if not futures.empty else 0
-    total_cash = cash['Position'].sum() if not cash.empty else 0
-    
-    # Sort puts by strike (highest first) - handle NaN values
-    if not puts.empty:
-        puts_sorted = puts.sort_values('Strike', ascending=False, na_position='last').copy()
-    else:
-        puts_sorted = puts.copy()
-    
-    # Initialize transformation tracking
-    synthetic_calls = []
-    transformation_log = []
-    
-    remaining_futures = total_futures
-    remaining_cash = total_cash
-    
-    # Process puts by strike (highest to lowest)
-    for strike in puts_sorted['Strike'].unique():
-        if pd.isna(strike):
-            continue
-            
-        puts_at_strike = puts_sorted[puts_sorted['Strike'] == strike].copy()
+    @staticmethod
+    def validate_row(row: pd.Series, row_index: int) -> Dict:
+        """Validate a single row of data"""
+        errors = []
         
-        for _, put_row in puts_at_strike.iterrows():
-            puts_to_process = put_row['Position']
-            put_market_price = put_row['Market price']
+        required_fields = ['Symbol', 'Type', 'Position', 'Lot Size', 'last price']
+        for field in required_fields:
+            if field not in row or pd.isna(row[field]):
+                errors.append(f"Missing {field}")
+        
+        if errors:
+            return {
+                'valid': False,
+                'error': {
+                    'row_number': row_index + 2,  # +2 for Excel row number (1-indexed + header)
+                    'symbol': row.get('Symbol', 'N/A'),
+                    'underlying': row.get('Underlying', 'N/A'),
+                    'reason': ', '.join(errors)
+                }
+            }
+        
+        return {'valid': True}
+    
+    @staticmethod
+    def determine_option_status(option_type: str, strike: float, last_price: float) -> bool:
+        """Determine if an option is ITM (In The Money)"""
+        if option_type == 'Call':
+            return last_price > strike
+        elif option_type == 'Put':
+            return last_price < strike
+        return False
+    
+    @staticmethod
+    def process_futures(row: pd.Series) -> Tuple[Dict, Dict]:
+        """Process futures trades"""
+        position = float(row['Position'])
+        lot_size = float(row['Lot Size'])
+        last_price = float(row['last price'])
+        
+        # Derivatives entry - close position
+        derivative = {
+            'Underlying': row['Underlying'],
+            'Symbol': row['Symbol'],
+            'Expiry': row['Expiry'],
+            'Buy/Sell': 'Sell' if position > 0 else 'Buy',
+            'Strategy': 'FULO' if position > 0 else 'FUSH',
+            'Position': abs(position),
+            'Price': last_price,
+            'Type': row['Type'],
+            'Strike': '',
+            'Lot Size': lot_size
+        }
+        
+        # Cash entry - open matching position
+        cash = {
+            'Underlying': row['Underlying'],
+            'Symbol': row['Underlying'],  # For cash, Symbol = Underlying
+            'Expiry': '',
+            'Buy/Sell': 'Buy' if position > 0 else 'Sell',
+            'Strategy': 'EQLO' if position > 0 else 'EQSH',
+            'Position': abs(position) * lot_size,
+            'Price': last_price,
+            'Type': 'CASH',
+            'Strike': '',
+            'Lot Size': ''
+        }
+        
+        return derivative, cash
+    
+    @staticmethod
+    def process_options(row: pd.Series) -> Tuple[Dict, Dict]:
+        """Process options trades (Calls and Puts)"""
+        position = float(row['Position'])
+        lot_size = float(row['Lot Size'])
+        last_price = float(row['last price'])
+        strike = float(row['Strike']) if pd.notna(row['Strike']) else 0
+        option_type = row['Type']
+        
+        # Determine ITM status
+        is_itm = ExpiryTradeProcessor.determine_option_status(option_type, strike, last_price)
+        is_single_stock = 'INDEX' not in str(row['Underlying']).upper()
+        
+        # Derivatives entry - always close at 0
+        if option_type == 'Call':
+            deriv_buy_sell = 'Sell' if position > 0 else 'Buy'
+            deriv_strategy = 'FULO' if position > 0 else 'FUSH'
+        else:  # Put
+            deriv_buy_sell = 'Sell' if position > 0 else 'Buy'
+            deriv_strategy = 'FUSH' if position > 0 else 'FULO'
+        
+        derivative = {
+            'Underlying': row['Underlying'],
+            'Symbol': row['Symbol'],
+            'Expiry': row['Expiry'],
+            'Buy/Sell': deriv_buy_sell,
+            'Strategy': deriv_strategy,
+            'Position': abs(position),
+            'Price': 0,
+            'Type': option_type,
+            'Strike': strike,
+            'Lot Size': lot_size
+        }
+        
+        # Cash entry - only for ITM options on single stocks
+        cash = None
+        if is_itm and is_single_stock:
+            if option_type == 'Call':
+                cash_buy_sell = 'Buy' if position > 0 else 'Sell'
+                cash_strategy = 'EQLO' if position > 0 else 'EQSH'
+                cash_price = strike
+            else:  # Put
+                cash_buy_sell = 'Sell' if position > 0 else 'Buy'
+                cash_strategy = 'EQSH' if position > 0 else 'EQLO'
+                cash_price = last_price
             
-            while puts_to_process > 0 and (remaining_futures > 0 or remaining_cash > 0):
-                # Determine how much to process
-                if remaining_futures > 0:
-                    process_amount = min(puts_to_process, remaining_futures)
-                    remaining_futures -= process_amount
-                    source = 'Futures'
+            cash = {
+                'Underlying': row['Underlying'],
+                'Symbol': row['Underlying'],
+                'Expiry': '',
+                'Buy/Sell': cash_buy_sell,
+                'Strategy': cash_strategy,
+                'Position': abs(position) * lot_size,
+                'Price': cash_price,
+                'Type': 'CASH',
+                'Strike': '',
+                'Lot Size': ''
+            }
+        
+        return derivative, cash
+    
+    @staticmethod
+    def process_dataframe(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+        """Process the entire dataframe"""
+        derivatives = []
+        cash_trades = []
+        errors = []
+        
+        for idx, row in df.iterrows():
+            # Validate row
+            validation = ExpiryTradeProcessor.validate_row(row, idx)
+            if not validation['valid']:
+                errors.append(validation['error'])
+                continue
+            
+            try:
+                trade_type = row['Type']
+                
+                if trade_type == 'Futures':
+                    deriv, cash = ExpiryTradeProcessor.process_futures(row)
+                    derivatives.append(deriv)
+                    cash_trades.append(cash)
+                    
+                elif trade_type in ['Call', 'Put']:
+                    deriv, cash = ExpiryTradeProcessor.process_options(row)
+                    derivatives.append(deriv)
+                    if cash:  # Cash entry might be None for OTM options
+                        cash_trades.append(cash)
+                        
                 else:
-                    process_amount = min(puts_to_process, remaining_cash)
-                    remaining_cash -= process_amount
-                    source = 'Cash'
-                
-                puts_to_process -= process_amount
-                
-                # Calculate synthetic call value
-                synthetic_value = put_market_price + (underlying_price - strike)
-                
-                # Record the synthetic call
-                synthetic_calls.append({
-                    'Type': 'Synthetic Call',
-                    'Strike': strike,
-                    'Position': process_amount,
-                    'Value per Unit': synthetic_value,
-                    'Total Value': process_amount * synthetic_value,
-                    'Created From': f'{source} + Put@{strike}'
+                    errors.append({
+                        'row_number': idx + 2,
+                        'symbol': row.get('Symbol', 'N/A'),
+                        'underlying': row.get('Underlying', 'N/A'),
+                        'reason': f'Unknown Type: {trade_type}'
+                    })
+                    
+            except Exception as e:
+                errors.append({
+                    'row_number': idx + 2,
+                    'symbol': row.get('Symbol', 'N/A'),
+                    'underlying': row.get('Underlying', 'N/A'),
+                    'reason': f'Processing error: {str(e)}'
                 })
-                
-                # Log the transformation
-                transformation_log.append({
-                    'Step': len(transformation_log) + 1,
-                    'Action': f'Create Synthetic Call',
-                    'Source': source,
-                    'Amount': process_amount,
-                    'Put Strike': strike,
-                    'Put Price': put_market_price,
-                    'Synthetic Value': synthetic_value
-                })
-            
-            # Record remaining puts if any
-            if puts_to_process > 0:
-                transformation_log.append({
-                    'Step': len(transformation_log) + 1,
-                    'Action': 'Unmatched Puts',
-                    'Source': 'Puts',
-                    'Amount': puts_to_process,
-                    'Put Strike': strike,
-                    'Put Price': put_market_price,
-                    'Synthetic Value': 'N/A'
-                })
-    
-    # Create final portfolio summary
-    final_portfolio = []
-    
-    # Add remaining stock positions
-    if remaining_futures > 0:
-        final_portfolio.append({
-            'Type': 'Futures',
-            'Strike': None,
-            'Position': remaining_futures,
-            'Value per Unit': underlying_price,
-            'Total Value': remaining_futures * underlying_price,
-            'Risk Type': 'Long Stock'
-        })
-    
-    if remaining_cash > 0:
-        final_portfolio.append({
-            'Type': 'Cash',
-            'Strike': None,
-            'Position': remaining_cash,
-            'Value per Unit': underlying_price,
-            'Total Value': remaining_cash * underlying_price,
-            'Risk Type': 'Long Stock'
-        })
-    
-    # Add synthetic calls
-    for sc in synthetic_calls:
-        final_portfolio.append({
-            'Type': sc['Type'],
-            'Strike': sc['Strike'],
-            'Position': sc['Position'],
-            'Value per Unit': sc['Value per Unit'],
-            'Total Value': sc['Total Value'],
-            'Risk Type': 'Call-like'
-        })
-    
-    # Add original calls
-    for _, call_row in calls.iterrows():
-        final_portfolio.append({
-            'Type': 'Original Call',
-            'Strike': call_row['Strike'],
-            'Position': call_row['Position'],
-            'Value per Unit': call_row['Market price'],
-            'Total Value': call_row['Position'] * call_row['Market price'],
-            'Risk Type': 'Call-like'
-        })
-    
-    # Check for unmatched puts
-    total_puts = puts['Position'].sum() if not puts.empty else 0
-    matched_puts = total_futures + total_cash - remaining_futures - remaining_cash
-    unmatched_puts = total_puts - matched_puts
-    
-    if unmatched_puts > 0:
-        # Add remaining puts to final portfolio
-        remaining_puts_df = puts_sorted.copy()
-        # Complex logic to identify which specific puts remain unmatched
-        # This is simplified for now
-        for _, put_row in remaining_puts_df.iterrows():
-            if unmatched_puts <= 0:
-                break
-            position = min(put_row['Position'], unmatched_puts)
-            if position > 0:
-                final_portfolio.append({
-                    'Type': 'Unmatched Put',
-                    'Strike': put_row['Strike'],
-                    'Position': position,
-                    'Value per Unit': put_row['Market price'],
-                    'Total Value': position * put_row['Market price'],
-                    'Risk Type': 'Put Protection'
-                })
-                unmatched_puts -= position
-    
-    return pd.DataFrame(final_portfolio), pd.DataFrame(transformation_log), underlying_price
+        
+        # Convert to DataFrames
+        derivatives_df = pd.DataFrame(derivatives) if derivatives else pd.DataFrame()
+        cash_df = pd.DataFrame(cash_trades) if cash_trades else pd.DataFrame()
+        errors_df = pd.DataFrame(errors) if errors else pd.DataFrame()
+        
+        return derivatives_df, cash_df, errors_df
 
-def create_risk_visualization(final_portfolio_df):
-    """Create risk visualization charts"""
-    
-    # Group by Risk Type
-    risk_summary = final_portfolio_df.groupby('Risk Type')['Total Value'].sum().reset_index()
-    
-    # Create pie chart
-    fig_pie = px.pie(risk_summary, values='Total Value', names='Risk Type',
-                      title='Portfolio Risk Distribution',
-                      color_discrete_map={'Long Stock': '#2E86AB', 
-                                         'Call-like': '#A23B72', 
-                                         'Put Protection': '#F18F01'})
-    
-    # Create bar chart by instrument type
-    type_summary = final_portfolio_df.groupby('Type')['Total Value'].sum().reset_index()
-    fig_bar = px.bar(type_summary, x='Type', y='Total Value',
-                      title='Portfolio Value by Instrument Type',
-                      color='Type',
-                      color_discrete_sequence=px.colors.qualitative.Set3)
-    
-    return fig_pie, fig_bar
+def convert_df_to_excel(df: pd.DataFrame) -> bytes:
+    """Convert dataframe to Excel bytes for download"""
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Sheet1')
+    return output.getvalue()
+
+def convert_df_to_csv(df: pd.DataFrame) -> bytes:
+    """Convert dataframe to CSV bytes for download"""
+    return df.to_csv(index=False).encode('utf-8')
 
 def main():
-    st.title("🎯 Portfolio Synthetic Call Transformer")
-    st.markdown("Transform your portfolio positions into a standardized risk view using synthetic calls")
+    # Header
+    st.title("📊 Expiry Trade Generator")
+    st.markdown("**Automated Excel/CSV transformation for derivatives and cash trades**")
     
-    # Sidebar
+    # Initialize session state
+    if 'processed' not in st.session_state:
+        st.session_state['processed'] = False
+    
+    # Sidebar for instructions
     with st.sidebar:
         st.header("📋 Instructions")
         st.markdown("""
-        ### How it works:
-        1. **Upload** your portfolio CSV file
-        2. **Review** the transformation process
-        3. **Analyze** the final risk position
+        ### Input Requirements:
+        **Excel (.xlsx, .xls) or CSV (.csv)** file with columns:
+        - **Underlying**
+        - **Symbol**
+        - **Expiry**
+        - **Position** (+ve = Long, -ve = Short)
+        - **Type** (Futures/Call/Put)
+        - **Strike** (for options)
+        - **Lot Size**
+        - **last price**
         
-        ### CSV Format Required:
-        - `Instrument`: Type (Cash, Futures, Puts, Calls)
-        - `Position`: Number of units
-        - `Strike`: Strike price (for options)
-        - `Market price`: Current market price
-        
-        ### Algorithm:
-        1. Uses Futures first, then Cash
-        2. Starts with highest strike puts
-        3. Creates synthetic calls using:
-           - Put Value + (Stock - Strike)
+        ### Output Files:
+        1. **Derivatives**: Closing trades
+        2. **Cash**: Cash legs 
+        3. **Errors**: Processing issues
         """)
         
         st.divider()
         
-        if st.button("📊 Load Sample Data"):
-            st.session_state['data'] = load_sample_data()
-            st.success("Sample data loaded!")
+        st.info("""
+        **Strategy Codes:**
+        - FULO: Long risk unwind
+        - FUSH: Short risk unwind
+        - EQLO: Equity Long
+        - EQSH: Equity Short
+        """)
+        
+        with st.expander("🔧 Processing Rules"):
+            st.markdown("""
+            **Futures:**
+            - Close at Last Price
+            - Add matching cash trade
+            
+            **Options:**
+            - Always close at Price = 0
+            - ITM Single Stock: Add cash trade
+            - OTM Options: No cash trade
+            
+            **ITM Cash Rules:**
+            - Calls: Buy/Sell at Strike
+            - Puts: Sell/Buy at Last Price
+            """)
     
     # Main content area
-    col1, col2 = st.columns([1, 1])
+    st.markdown("---")
     
-    with col1:
-        st.header("📁 Data Input")
-        
-        uploaded_file = st.file_uploader(
-            "Upload your portfolio CSV file",
-            type=['csv'],
-            help="File should contain Instrument, Position, Strike, and Market price columns"
-        )
-        
-        if uploaded_file is not None:
-            try:
-                df = pd.read_csv(uploaded_file)
-                # Clean column names
-                df.columns = df.columns.str.strip()
-                st.session_state['data'] = df
-                st.success(f"✅ File loaded successfully! {len(df)} positions found.")
-                
-                # Show column info for debugging
-                st.info(f"Columns detected: {', '.join(df.columns.tolist())}")
-            except Exception as e:
-                st.error(f"Error reading file: {str(e)}")
-    
+    # File uploader section
+    col1, col2, col3 = st.columns([1, 3, 1])
     with col2:
-        st.header("📊 Current Portfolio")
-        
-        if 'data' in st.session_state:
-            st.dataframe(st.session_state['data'], use_container_width=True)
-        else:
-            st.info("Please upload a file or load sample data from the sidebar")
+        uploaded_file = st.file_uploader(
+            "Choose Excel/CSV File",
+            type=['xlsx', 'xls', 'csv'],
+            help="Upload your expiry trades file (Excel or CSV format)"
+        )
     
-    # Process button
-    if 'data' in st.session_state:
-        st.divider()
-        
-        if st.button("🔄 Transform Portfolio", type="primary", use_container_width=True):
-            with st.spinner("Processing portfolio transformation..."):
-                try:
-                    final_portfolio, transformation_log, underlying_price = process_portfolio(st.session_state['data'])
-                    
-                    if final_portfolio is not None:
-                        st.session_state['final_portfolio'] = final_portfolio
-                        st.session_state['transformation_log'] = transformation_log
-                        st.session_state['underlying_price'] = underlying_price
-                        st.success("✅ Portfolio transformation complete!")
-                except Exception as e:
-                    st.error(f"Error during transformation: {str(e)}")
-                    st.info("Please check that your CSV has the correct format with columns: Instrument, Position, Strike, Market price")
-    
-    # Display results
-    if 'final_portfolio' in st.session_state:
-        st.divider()
-        st.header("📈 Transformation Results")
-        
-        # Display underlying price
-        st.markdown(f"<div class='info-box'>📍 <b>Underlying Price Used:</b> {st.session_state['underlying_price']:.2f}</div>", 
-                   unsafe_allow_html=True)
-        
-        # Create tabs for different views
-        tab1, tab2, tab3, tab4 = st.tabs(["📊 Final Portfolio", "📝 Transformation Log", "📉 Risk Visualization", "💾 Export"])
-        
-        with tab1:
-            st.subheader("Transformed Portfolio Positions")
+    if uploaded_file is not None:
+        try:
+            # Read the file based on extension
+            file_extension = uploaded_file.name.split('.')[-1].lower()
             
-            # Format the dataframe for display
-            display_df = st.session_state['final_portfolio'].copy()
-            display_df['Value per Unit'] = display_df['Value per Unit'].round(2)
-            display_df['Total Value'] = display_df['Total Value'].round(2)
-            display_df['Position'] = display_df['Position'].astype(int)
+            if file_extension == 'csv':
+                # Read CSV file
+                df = pd.read_csv(uploaded_file)
+            else:
+                # Read Excel file (xls or xlsx)
+                df = pd.read_excel(uploaded_file)
             
-            # Color code by risk type
-            def highlight_risk_type(row):
-                if row['Risk Type'] == 'Long Stock':
-                    return ['background-color: #e8f5e9'] * len(row)
-                elif row['Risk Type'] == 'Call-like':
-                    return ['background-color: #f3e5f5'] * len(row)
-                elif row['Risk Type'] == 'Put Protection':
-                    return ['background-color: #fff3e0'] * len(row)
-                return [''] * len(row)
+            # Display input summary
+            st.markdown("### 📁 Input File Summary")
             
-            styled_df = display_df.style.apply(highlight_risk_type, axis=1).format({
-                'Strike': lambda x: f'{x:.0f}' if pd.notna(x) else '-',
-                'Position': '{:,.0f}',
-                'Value per Unit': '{:,.2f}',
-                'Total Value': '{:,.2f}'
-            })
-            
-            st.dataframe(styled_df, use_container_width=True, height=400)
-            
-            # Summary statistics
             col1, col2, col3, col4 = st.columns(4)
-            
             with col1:
-                total_value = display_df['Total Value'].sum()
-                st.metric("Total Portfolio Value", f"{total_value:,.0f}")
-            
+                st.metric("Total Trades", len(df))
             with col2:
-                long_exposure = display_df[display_df['Risk Type'] == 'Long Stock']['Total Value'].sum()
-                st.metric("Long Stock Exposure", f"{long_exposure:,.0f}")
-            
+                if 'Type' in df.columns:
+                    trade_types = df['Type'].value_counts()
+                    st.metric("Futures", trade_types.get('Futures', 0))
+                else:
+                    st.metric("Futures", "N/A")
             with col3:
-                call_exposure = display_df[display_df['Risk Type'] == 'Call-like']['Total Value'].sum()
-                st.metric("Call-like Exposure", f"{call_exposure:,.0f}")
-            
+                if 'Type' in df.columns:
+                    st.metric("Calls", trade_types.get('Call', 0))
+                else:
+                    st.metric("Calls", "N/A")
             with col4:
-                put_protection = display_df[display_df['Risk Type'] == 'Put Protection']['Total Value'].sum()
-                st.metric("Put Protection", f"{put_protection:,.0f}")
-        
-        with tab2:
-            st.subheader("Step-by-Step Transformation Process")
+                if 'Type' in df.columns:
+                    st.metric("Puts", trade_types.get('Put', 0))
+                else:
+                    st.metric("Puts", "N/A")
             
-            log_df = st.session_state['transformation_log']
+            # Show preview of input data
+            with st.expander("👁️ Preview Input Data"):
+                st.dataframe(df.head(20), use_container_width=True)
             
-            # Format the log for display
-            log_display = log_df.copy()
-            for col in ['Amount', 'Put Price', 'Synthetic Value']:
-                if col in log_display.columns:
-                    log_display[col] = log_display[col].apply(
-                        lambda x: f'{float(x):,.2f}' if x != 'N/A' and pd.notna(x) else x
-                    )
-            
-            st.dataframe(log_display, use_container_width=True, height=400)
-            
-            # Summary of transformation
-            st.markdown(f"""
-            <div class='success-box'>
-            <b>Transformation Summary:</b><br>
-            • Total steps executed: {len(log_df)}<br>
-            • Synthetic calls created: {len(log_df[log_df['Action'] == 'Create Synthetic Call'])}<br>
-            • Unmatched positions: {len(log_df[log_df['Action'] == 'Unmatched Puts'])}
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with tab3:
-            st.subheader("Portfolio Risk Visualization")
-            
-            fig_pie, fig_bar = create_risk_visualization(st.session_state['final_portfolio'])
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.plotly_chart(fig_pie, use_container_width=True)
-            
+            # Process button
+            st.markdown("---")
+            col1, col2, col3 = st.columns([1, 2, 1])
             with col2:
-                st.plotly_chart(fig_bar, use_container_width=True)
+                if st.button("🚀 Process Trades", type="primary", use_container_width=True):
+                    with st.spinner("Processing trades..."):
+                        # Process the data
+                        processor = ExpiryTradeProcessor()
+                        derivatives_df, cash_df, errors_df = processor.process_dataframe(df)
+                        
+                        # Store in session state
+                        st.session_state['derivatives'] = derivatives_df
+                        st.session_state['cash'] = cash_df
+                        st.session_state['errors'] = errors_df
+                        st.session_state['processed'] = True
+                    
+                    st.success("✅ Processing complete!")
             
-            # Strike distribution for options
-            options_df = st.session_state['final_portfolio'][st.session_state['final_portfolio']['Strike'].notna()]
-            
-            if not options_df.empty:
-                st.subheader("Strike Distribution")
+            # Display results if processed
+            if st.session_state.get('processed', False):
+                st.markdown("---")
+                st.markdown("### 📊 Processing Results")
                 
-                fig_strike = go.Figure()
+                # Results summary with download buttons
+                col1, col2, col3 = st.columns(3)
                 
-                for option_type in options_df['Type'].unique():
-                    type_df = options_df[options_df['Type'] == option_type]
-                    fig_strike.add_trace(go.Bar(
-                        x=type_df['Strike'],
-                        y=type_df['Position'],
-                        name=option_type,
-                        text=type_df['Position'].apply(lambda x: f'{x:,.0f}'),
-                        textposition='auto',
-                    ))
+                with col1:
+                    st.markdown('<div class="info-metric">', unsafe_allow_html=True)
+                    st.markdown("**Derivatives File**")
+                    st.metric("", f"{len(st.session_state['derivatives'])} trades", label_visibility="collapsed")
+                    
+                    if not st.session_state['derivatives'].empty:
+                        excel_data = convert_df_to_excel(st.session_state['derivatives'])
+                        st.download_button(
+                            label="📥 Download Derivatives",
+                            data=excel_data,
+                            file_name='expiry_trades_derivatives.xlsx',
+                            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                            use_container_width=True
+                        )
+                    else:
+                        st.warning("No derivatives generated")
+                    st.markdown('</div>', unsafe_allow_html=True)
                 
-                fig_strike.update_layout(
-                    title='Position Distribution by Strike',
-                    xaxis_title='Strike Price',
-                    yaxis_title='Position Size',
-                    barmode='group',
-                    height=400
-                )
+                with col2:
+                    st.markdown('<div class="success-metric">', unsafe_allow_html=True)
+                    st.markdown("**Cash File**")
+                    st.metric("", f"{len(st.session_state['cash'])} cash legs", label_visibility="collapsed")
+                    
+                    if not st.session_state['cash'].empty:
+                        excel_data = convert_df_to_excel(st.session_state['cash'])
+                        st.download_button(
+                            label="💰 Download Cash",
+                            data=excel_data,
+                            file_name='expiry_trades_cash.xlsx',
+                            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                            use_container_width=True
+                        )
+                    else:
+                        st.warning("No cash trades generated")
+                    st.markdown('</div>', unsafe_allow_html=True)
                 
-                st.plotly_chart(fig_strike, use_container_width=True)
+                with col3:
+                    error_count = len(st.session_state['errors'])
+                    if error_count > 0:
+                        st.markdown('<div class="error-metric">', unsafe_allow_html=True)
+                    else:
+                        st.markdown('<div class="success-metric">', unsafe_allow_html=True)
+                    
+                    st.markdown("**Error Log**")
+                    st.metric("", f"{error_count} errors", label_visibility="collapsed")
+                    
+                    if not st.session_state['errors'].empty:
+                        csv_data = convert_df_to_csv(st.session_state['errors'])
+                        st.download_button(
+                            label="⚠️ Download Errors",
+                            data=csv_data,
+                            file_name='expiry_trades_errors.csv',
+                            mime='text/csv',
+                            use_container_width=True
+                        )
+                    else:
+                        st.success("No errors!")
+                    st.markdown('</div>', unsafe_allow_html=True)
+                
+                # Download all button
+                st.markdown("---")
+                col1, col2, col3 = st.columns([2, 3, 2])
+                with col2:
+                    # Create a ZIP file with all outputs (optional, complex implementation)
+                    # For now, show success message with individual downloads above
+                    st.info("✅ All files are ready for download using the buttons above")
+                
+                # Detailed views
+                st.markdown("---")
+                st.markdown("### 📋 Detailed Views")
+                
+                # Tabs for detailed data
+                tab1, tab2, tab3 = st.tabs(["📈 Derivatives", "💰 Cash", "⚠️ Errors"])
+                
+                with tab1:
+                    if not st.session_state['derivatives'].empty:
+                        # Show summary statistics
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.markdown("**Strategy Distribution**")
+                            strategy_counts = st.session_state['derivatives']['Strategy'].value_counts()
+                            st.bar_chart(strategy_counts)
+                        with col2:
+                            st.markdown("**Buy/Sell Distribution**")
+                            buysell_counts = st.session_state['derivatives']['Buy/Sell'].value_counts()
+                            st.bar_chart(buysell_counts)
+                        
+                        st.markdown("**Full Derivatives Data**")
+                        st.dataframe(
+                            st.session_state['derivatives'],
+                            use_container_width=True,
+                            height=400
+                        )
+                    else:
+                        st.info("No derivatives trades generated")
+                
+                with tab2:
+                    if not st.session_state['cash'].empty:
+                        # Show summary statistics
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.markdown("**Strategy Distribution**")
+                            strategy_counts = st.session_state['cash']['Strategy'].value_counts()
+                            st.bar_chart(strategy_counts)
+                        with col2:
+                            st.markdown("**Top Underlyings by Position**")
+                            position_sum = st.session_state['cash'].groupby('Underlying')['Position'].sum().sort_values(ascending=False).head(10)
+                            st.bar_chart(position_sum)
+                        
+                        st.markdown("**Full Cash Data**")
+                        st.dataframe(
+                            st.session_state['cash'],
+                            use_container_width=True,
+                            height=400
+                        )
+                    else:
+                        st.info("No cash trades generated")
+                
+                with tab3:
+                    if not st.session_state['errors'].empty:
+                        st.error(f"Found {len(st.session_state['errors'])} errors during processing")
+                        
+                        # Show error details
+                        st.markdown("**Error Details**")
+                        st.dataframe(
+                            st.session_state['errors'],
+                            use_container_width=True,
+                            height=400
+                        )
+                        
+                        # Show each error as alert
+                        with st.expander("View Individual Errors"):
+                            for _, error in st.session_state['errors'].iterrows():
+                                st.error(f"**Row {error['row_number']}** | {error['symbol']} | {error['reason']}")
+                    else:
+                        st.success("✅ All trades processed successfully with no errors!")
+                
+                # Reset button
+                st.markdown("---")
+                col1, col2, col3 = st.columns([2, 2, 2])
+                with col2:
+                    if st.button("🔄 Process New File", use_container_width=True):
+                        st.session_state['processed'] = False
+                        st.rerun()
         
-        with tab4:
-            st.subheader("Export Transformed Portfolio")
-            
-            # Prepare export data
-            export_df = st.session_state['final_portfolio'].copy()
-            
-            # Convert to CSV
-            csv = export_df.to_csv(index=False)
-            
-            # Create download button
-            st.download_button(
-                label="📥 Download Transformed Portfolio (CSV)",
-                data=csv,
-                file_name=f"transformed_portfolio_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv"
-            )
-            
-            # Also provide transformation log
-            log_csv = st.session_state['transformation_log'].to_csv(index=False)
-            
-            st.download_button(
-                label="📥 Download Transformation Log (CSV)",
-                data=log_csv,
-                file_name=f"transformation_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv"
-            )
-            
+        except Exception as e:
+            st.error(f"Error processing file: {str(e)}")
+            st.exception(e)
+    
+    else:
+        # Landing page when no file is uploaded
+        st.markdown("---")
+        
+        # Welcome message
+        st.markdown("""
+        <div style='background-color: #f0f2f6; padding: 30px; border-radius: 10px; text-align: center;'>
+            <h2>Welcome to Expiry Trade Generator</h2>
+            <p style='font-size: 18px; color: #555;'>Transform your expiry trades Excel/CSV file into derivatives and cash files with one click!</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("---")
+        
+        # How it works
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
             st.markdown("""
-            <div class='info-box'>
-            <b>📌 Export includes:</b><br>
-            • Final portfolio positions with risk classifications<br>
-            • Synthetic call valuations<br>
-            • Remaining unmatched positions<br>
-            • Step-by-step transformation log
+            <div style='background-color: #e8f4fd; padding: 20px; border-radius: 10px; height: 200px;'>
+                <h4 style='color: #0066cc;'>1️⃣ Upload</h4>
+                <p>Upload your Excel or CSV file containing expiry trades data</p>
             </div>
             """, unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown("""
+            <div style='background-color: #fff4e6; padding: 20px; border-radius: 10px; height: 200px;'>
+                <h4 style='color: #ff9800;'>2️⃣ Process</h4>
+                <p>Click process to automatically generate derivatives and cash trades</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col3:
+            st.markdown("""
+            <div style='background-color: #e8f5e9; padding: 20px; border-radius: 10px; height: 200px;'>
+                <h4 style='color: #4caf50;'>3️⃣ Download</h4>
+                <p>Download your generated files with proper formatting</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # Sample data structure
+        st.markdown("---")
+        with st.expander("📋 View Sample Input Structure"):
+            sample_data = pd.DataFrame({
+                'Underlying': ['ABC IS Equity', 'XYZ IS Equity', 'PQR IS Equity', 'DEF IS Equity'],
+                'Symbol': ['ABC=U5 IS Equity', 'XYZ IS 09/30/25 C100 Equity', 'PQR IS 09/30/25 P50 Equity', 'DEF=U5 IS Equity'],
+                'Expiry': ['2025-09-30', '2025-09-30', '2025-09-30', '2025-09-30'],
+                'Position': [100, -50, 75, -200],
+                'Type': ['Futures', 'Call', 'Put', 'Futures'],
+                'Strike': [np.nan, 100, 50, np.nan],
+                'Lot Size': [500, 250, 300, 1000],
+                'last price': [150.5, 110.25, 45.75, 225.80]
+            })
+            st.dataframe(sample_data, use_container_width=True)
+            
+            # Download sample files buttons
+            col1, col2 = st.columns(2)
+            with col1:
+                sample_excel = convert_df_to_excel(sample_data)
+                st.download_button(
+                    label="📥 Download Sample Excel",
+                    data=sample_excel,
+                    file_name='sample_expiry_trades.xlsx',
+                    mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                )
+            with col2:
+                sample_csv = convert_df_to_csv(sample_data)
+                st.download_button(
+                    label="📥 Download Sample CSV",
+                    data=sample_csv,
+                    file_name='sample_expiry_trades.csv',
+                    mime='text/csv'
+                )
 
 if __name__ == "__main__":
     main()
