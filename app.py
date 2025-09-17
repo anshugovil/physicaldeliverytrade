@@ -1,4 +1,9 @@
-"""
+@staticmethod
+    def is_index_product(underlying: str) -> bool:
+        """Check if the underlying is an index product"""
+        if pd.isna(underlying):
+            return False
+        return 'INDEX' in str(underlying).upper()"""
 Expiry Trade Generator - Streamlit Web Application
 Automated Excel transformation for derivatives and cash trades
 """
@@ -118,11 +123,21 @@ class ExpiryTradeProcessor:
         return False
     
     @staticmethod
+    def is_index_product(underlying: str) -> bool:
+        """Check if the underlying is an index product"""
+        if pd.isna(underlying):
+            return False
+        return 'INDEX' in str(underlying).upper()
+    
+    @staticmethod
     def process_futures(row: pd.Series) -> Tuple[Dict, Dict]:
         """Process futures trades"""
         position = float(row['Position'])
         lot_size = float(row['Lot Size'])
         last_price = float(row['last price'])
+        
+        # Check if it's an index future
+        is_index = ExpiryTradeProcessor.is_index_product(row['Underlying'])
         
         # Derivatives entry - close position
         derivative = {
@@ -139,19 +154,21 @@ class ExpiryTradeProcessor:
             'tradenotes': ''  # Blank for futures
         }
         
-        # Cash entry - open matching position
-        cash = {
-            'Underlying': row['Underlying'],
-            'Symbol': row['Underlying'],  # For cash, Symbol = Underlying
-            'Expiry': '',
-            'Buy/Sell': 'Buy' if position > 0 else 'Sell',
-            'Strategy': 'EQLO' if position > 0 else 'EQSH',
-            'Position': abs(position) * lot_size,
-            'Price': last_price,
-            'Type': 'CASH',
-            'Strike': '',
-            'Lot Size': ''
-        }
+        # Cash entry - only for stock futures (not index futures)
+        cash = None
+        if not is_index:
+            cash = {
+                'Underlying': row['Underlying'],
+                'Symbol': row['Underlying'],  # For cash, Symbol = Underlying
+                'Expiry': '',
+                'Buy/Sell': 'Buy' if position > 0 else 'Sell',
+                'Strategy': 'EQLO2',  # Always EQLO2 for all cash trades
+                'Position': abs(position) * lot_size,
+                'Price': last_price,
+                'Type': 'CASH',
+                'Strike': '',
+                'Lot Size': ''
+            }
         
         return derivative, cash
     
@@ -164,11 +181,11 @@ class ExpiryTradeProcessor:
         strike = float(row['Strike']) if pd.notna(row['Strike']) else 0
         option_type = row['Type']
         
-        # Determine ITM status
+        # Determine ITM status and index/stock type
         is_itm = ExpiryTradeProcessor.determine_option_status(option_type, strike, last_price)
-        is_single_stock = 'INDEX' not in str(row['Underlying']).upper()
+        is_index = ExpiryTradeProcessor.is_index_product(row['Underlying'])
         
-        # Derivatives entry - always close at 0
+        # Derivatives entry
         if option_type == 'Call':
             deriv_buy_sell = 'Sell' if position > 0 else 'Buy'
             deriv_strategy = 'FULO' if position > 0 else 'FUSH'
@@ -176,9 +193,23 @@ class ExpiryTradeProcessor:
             deriv_buy_sell = 'Sell' if position > 0 else 'Buy'
             deriv_strategy = 'FUSH' if position > 0 else 'FULO'
         
-        # Determine tradenotes
+        # Determine price for derivatives
+        if is_index:
+            # Index options are cash-settled at intrinsic value
+            if is_itm:
+                if option_type == 'Call':
+                    deriv_price = max(0, last_price - strike)  # Intrinsic value for call (can't be negative)
+                else:  # Put
+                    deriv_price = max(0, strike - last_price)  # Intrinsic value for put (can't be negative)
+            else:
+                deriv_price = 0  # OTM expires worthless
+        else:
+            # Stock options always close at 0 (physical delivery)
+            deriv_price = 0
+        
+        # Determine tradenotes (only for non-index ITM options)
         tradenotes = ''
-        if is_itm:
+        if is_itm and not is_index:
             if deriv_buy_sell == 'Buy':
                 tradenotes = 'A'
             else:  # Sell
@@ -191,23 +222,21 @@ class ExpiryTradeProcessor:
             'Buy/Sell': deriv_buy_sell,
             'Strategy': deriv_strategy,
             'Position': abs(position),
-            'Price': 0,
+            'Price': deriv_price,
             'Type': option_type,
             'Strike': strike,
             'Lot Size': lot_size,
             'tradenotes': tradenotes
         }
         
-        # Cash entry - only for ITM options on single stocks
+        # Cash entry - only for ITM single stock options (NOT for index)
         cash = None
-        if is_itm and is_single_stock:
+        if is_itm and not is_index:  # Changed from is_single_stock to not is_index
             if option_type == 'Call':
                 cash_buy_sell = 'Buy' if position > 0 else 'Sell'
-                cash_strategy = 'EQLO' if position > 0 else 'EQSH'
                 cash_price = strike  # Calls are exercised at strike price
             else:  # Put
                 cash_buy_sell = 'Sell' if position > 0 else 'Buy'
-                cash_strategy = 'EQSH' if position > 0 else 'EQLO'
                 cash_price = strike  # Puts are also exercised at strike price
             
             cash = {
@@ -215,7 +244,7 @@ class ExpiryTradeProcessor:
                 'Symbol': row['Underlying'],
                 'Expiry': '',
                 'Buy/Sell': cash_buy_sell,
-                'Strategy': cash_strategy,
+                'Strategy': 'EQLO2',  # Always EQLO2 for all cash trades
                 'Position': abs(position) * lot_size,
                 'Price': cash_price,
                 'Type': 'CASH',
@@ -245,7 +274,8 @@ class ExpiryTradeProcessor:
                 if trade_type == 'Futures':
                     deriv, cash = ExpiryTradeProcessor.process_futures(row)
                     derivatives.append(deriv)
-                    cash_trades.append(cash)
+                    if cash:  # Cash might be None for index futures
+                        cash_trades.append(cash)
                     
                 elif trade_type in ['Call', 'Put']:
                     deriv, cash = ExpiryTradeProcessor.process_options(row)
@@ -313,46 +343,70 @@ def main():
         
         ### Output Files:
         1. **Derivatives**: Closing trades with tradenotes
-        2. **Cash**: Cash legs 
+           - Strategies: FULO (long unwind) / FUSH (short unwind)
+           - Stock options: Close at 0
+           - Index options: Close at intrinsic value
+        2. **Cash**: Physical delivery trades (stocks only)
+           - Strategy: EQLO2 (all trades)
+           - No index products
         3. **Errors**: Processing issues
         """)
         
         st.divider()
         
         st.info("""
-        **Strategy Codes:**
+        **Derivatives Strategies:**
         - FULO: Long risk unwind
         - FUSH: Short risk unwind
-        - EQLO: Equity Long
-        - EQSH: Equity Short
         
-        **Trade Notes:**
-        - A: ITM option buy (assignment)
-        - E: ITM option sell (exercise)
-        - Blank: Futures/OTM options
+        **Cash Strategy:**
+        - EQLO2: All cash trades (universal)
+        
+        **Trade Notes (Stock Options Only):**
+        - A: ITM stock option buy (assignment)
+        - E: ITM stock option sell (exercise)
+        - Blank: Futures/OTM/Index products
+        
+        **Index vs Stock Products:**
+        - Index: Cash settled, no physical delivery
+        - Stock: Physical delivery required
         """)
         
         with st.expander("🔧 Processing Rules"):
             st.markdown("""
-            **Futures:**
-            - Close at Last Price
-            - Add matching cash trade
+            **Stock Futures:**
+            - Derivatives: Close at Last Price (FULO/FUSH strategy)
+            - Cash: Matching position (EQLO2 strategy)
             
-            **Options:**
-            - Always close at Price = 0
-            - ITM Single Stock: Add cash trade
-            - OTM Options: No cash trade
+            **Index Futures:**
+            - Derivatives: Close at Last Price (FULO/FUSH strategy)
+            - Cash: NO trade (cash settled)
+            
+            **Stock Options (Physical Delivery):**
+            - Derivatives: Always close at Price = 0 (FULO/FUSH strategy)
+            - ITM options: Add cash trade at strike (EQLO2 strategy)
+            - OTM options: No cash trade
             - ITM options get tradenotes (A/E)
             
-            **Trade Notes Column:**
-            - ITM Buy trades: "A" (Assignment)
-            - ITM Sell trades: "E" (Exercise)
-            - Futures: Blank
-            - OTM Options: Blank
+            **Index Options (Cash Settled):**
+            - Derivatives ITM: Close at intrinsic value (FULO/FUSH strategy)
+            - Derivatives OTM: Close at 0
+            - Cash: NO trades (cash settled)
+            - tradenotes: Always blank (no physical delivery)
             
-            **ITM Cash Rules:**
-            - Calls: Buy/Sell at Strike Price
-            - Puts: Sell/Buy at Strike Price
+            **Trade Notes Column:**
+            - ITM Stock Buy trades: "A" (Assignment)
+            - ITM Stock Sell trades: "E" (Exercise)
+            - Index Options: Always blank
+            - All Futures: Always blank
+            - OTM Options: Always blank
+            
+            **Cash File Rules (Stocks Only):**
+            - Stock Futures: Matching position at last price
+            - ITM Stock Calls: Buy at Strike (long) / Sell at Strike (short)
+            - ITM Stock Puts: Sell at Strike (long) / Buy at Strike (short)
+            - **ALL trades use strategy: EQLO2**
+            - Index products: NO cash entries
             """)
     
     # Main content area
@@ -437,11 +491,24 @@ def main():
                     st.markdown("**Derivatives File**")
                     st.metric("", f"{len(st.session_state['derivatives'])} trades", label_visibility="collapsed")
                     
-                    # Count ITM options with tradenotes
+                    # Count ITM options and index options
                     if not st.session_state['derivatives'].empty and 'tradenotes' in st.session_state['derivatives'].columns:
                         itm_count = len(st.session_state['derivatives'][st.session_state['derivatives']['tradenotes'].isin(['A', 'E'])])
-                        if itm_count > 0:
-                            st.caption(f"ITM Options: {itm_count}")
+                        # Count index options (those with intrinsic value pricing)
+                        index_options = st.session_state['derivatives'][
+                            (st.session_state['derivatives']['Type'].isin(['Call', 'Put'])) &
+                            (st.session_state['derivatives']['Price'] != 0) &
+                            (st.session_state['derivatives']['tradenotes'] == '')
+                        ]
+                        index_count = len(index_options)
+                        
+                        if itm_count > 0 or index_count > 0:
+                            caption_parts = []
+                            if itm_count > 0:
+                                caption_parts.append(f"ITM Stock Options: {itm_count}")
+                            if index_count > 0:
+                                caption_parts.append(f"Index Options: {index_count}")
+                            st.caption(" | ".join(caption_parts))
                     
                     if not st.session_state['derivatives'].empty:
                         excel_data = convert_df_to_excel(st.session_state['derivatives'])
@@ -537,10 +604,10 @@ def main():
                                         elif key == 'E':
                                             tn_display['E (Exercise)'] = value
                                         elif key == '':
-                                            tn_display['Blank (Futures/OTM)'] = value
+                                            tn_display['Blank (Futures/OTM/Index)'] = value
                                     st.bar_chart(pd.Series(tn_display))
                                 else:
-                                    st.info("No ITM options")
+                                    st.info("No ITM stock options")
                         
                         st.markdown("**Full Derivatives Data**")
                         # Display with proper column order including tradenotes
@@ -560,13 +627,16 @@ def main():
                         # Show summary statistics
                         col1, col2 = st.columns(2)
                         with col1:
-                            st.markdown("**Strategy Distribution**")
-                            strategy_counts = st.session_state['cash']['Strategy'].value_counts()
-                            st.bar_chart(strategy_counts)
+                            st.markdown("**Buy/Sell Distribution**")
+                            buysell_counts = st.session_state['cash']['Buy/Sell'].value_counts()
+                            st.bar_chart(buysell_counts)
                         with col2:
                             st.markdown("**Top Underlyings by Position**")
                             position_sum = st.session_state['cash'].groupby('Underlying')['Position'].sum().sort_values(ascending=False).head(10)
                             st.bar_chart(position_sum)
+                        
+                        # Note about strategy
+                        st.success("✅ All cash trades use universal strategy: **EQLO2**")
                         
                         st.markdown("**Full Cash Data**")
                         st.dataframe(
@@ -637,7 +707,7 @@ def main():
             st.markdown("""
             <div style='background-color: #fff4e6; padding: 20px; border-radius: 10px; height: 200px;'>
                 <h4 style='color: #ff9800;'>2️⃣ Process</h4>
-                <p>Click process to automatically generate derivatives and cash trades</p>
+                <p>Automatically handles futures, stock options, and index options with proper settlement rules</p>
             </div>
             """, unsafe_allow_html=True)
         
@@ -653,16 +723,26 @@ def main():
         st.markdown("---")
         with st.expander("📋 View Sample Input Structure"):
             sample_data = pd.DataFrame({
-                'Underlying': ['ABC IS Equity', 'XYZ IS Equity', 'PQR IS Equity', 'DEF IS Equity'],
-                'Symbol': ['ABC=U5 IS Equity', 'XYZ IS 09/30/25 C100 Equity', 'PQR IS 09/30/25 P50 Equity', 'DEF=U5 IS Equity'],
-                'Expiry': ['2025-09-30', '2025-09-30', '2025-09-30', '2025-09-30'],
-                'Position': [100, -50, 75, -200],
-                'Type': ['Futures', 'Call', 'Put', 'Futures'],
-                'Strike': [np.nan, 100, 50, np.nan],
-                'Lot Size': [500, 250, 300, 1000],
-                'last price': [150.5, 110.25, 45.75, 225.80]
+                'Underlying': ['ABC IS Equity', 'XYZ IS Equity', 'PQR IS Equity', 'NIFTY INDEX', 'NIFTY INDEX', 'BANKNIFTY INDEX'],
+                'Symbol': ['ABC=U5 IS Equity', 'XYZ IS 09/30/25 C100 Equity', 'PQR IS 09/30/25 P50 Equity', 'NIFTY=U5 Index', 'NIFTY 09/30/25 C25000 Index', 'BANKNIFTY 09/30/25 P48000 Index'],
+                'Expiry': ['2025-09-30', '2025-09-30', '2025-09-30', '2025-09-30', '2025-09-30', '2025-09-30'],
+                'Position': [100, -50, 75, -200, 40, -25],
+                'Type': ['Futures', 'Call', 'Put', 'Futures', 'Call', 'Put'],
+                'Strike': [np.nan, 100, 50, np.nan, 25000, 48000],
+                'Lot Size': [500, 250, 300, 50, 50, 30],
+                'last price': [150.5, 110.25, 45.75, 25500, 25250, 47800]
             })
             st.dataframe(sample_data, use_container_width=True)
+            
+            st.caption("""
+            **Expected Output for Sample Data:**
+            - Row 1 (Stock Future): Derivatives at 150.5 + Cash trade (EQLO2)
+            - Row 2 (ITM Stock Call): Derivatives at 0 + Cash at 100 (EQLO2) + tradenote "A" 
+            - Row 3 (OTM Stock Put): Derivatives at 0, no cash trade
+            - Row 4 (Index Future): Derivatives at 25500, no cash trade
+            - Row 5 (ITM Index Call): Derivatives at 250 (25250-25000), no cash
+            - Row 6 (ITM Index Put): Derivatives at 200 (48000-47800), no cash
+            """)
             
             # Download sample files buttons
             col1, col2 = st.columns(2)
