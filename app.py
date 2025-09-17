@@ -8,7 +8,56 @@ with tab2:
                             st.bar_chart(buysell_counts)
                         with col2:
                             st.markdown("**Top Underlyings by Position**")
-                            position_sum = st.session_state['cash"""
+                            position_sum = st.session_state['cash'].groupby('Underlying')['Position'].sum().sort_values(ascending=False).head(10)
+                            st.bar_chart(position_sum)
+                        with col3:
+                            st.markdown("**Tax Summary & Trade Notes**")
+                            if 'Taxes' in st.session_state['cash'].columns:
+                                total_stt = st.session_state['cash']['STT'].sum()
+                                total_stamp = st.session_state['cash']['Stamp Duty'].sum()
+                                total_taxes = st.session_state['cash']['Taxes'].sum()
+                                st.metric("Total STT", f"₹{total_stt:,.2f}")
+                                st.metric("Total Stamp Duty", f"₹{total_stamp:,.2f}")
+                                st.metric("Total Taxes", f"₹{total_taxes:,.2f}")
+                            
+                            # Show tradenotes distribution if exists
+                            if 'tradenotes' in st.session_state['cash'].columns:
+                                tn_counts = st.session_state['cash']['tradenotes'].value_counts()
+                                exercise_count = tn_counts.get('E', 0)
+                                assignment_count = tn_counts.get('A', 0)
+                                futures_count = len(st.session_state['cash'][st.session_state['cash']['tradenotes'] == ''])
+                                st.caption(f"Exercise (E): {exercise_count} | Assignment (A): {assignment_count} | Futures: {futures_count}")
+                        
+                        # Note about strategy and taxes
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.success("✅ All cash trades use universal strategy: **EQLO2**")
+                        with col2:
+                            st.info("💰 Trade Notes: E=Exercise (long options), A=Assignment (short options), Blank=Futures")
+                        
+                        st.markdown("**Full Cash Data with Tax Details and Trade Notes**")
+                        # Display with proper column order including taxes and tradenotes
+                        if 'STT' in st.session_state['cash'].columns:
+                            display_columns = ['Underlying', 'Symbol', 'Expiry', 'Buy/Sell', 
+                                             'Strategy', 'Position', 'Price', 'Type', 
+                                             'Strike', 'Lot Size', 'tradenotes', 'STT', 'Stamp Duty', 'Taxes']
+                            display_df = st.session_state['cash'][display_columns]
+                        else:
+                            display_df = st.session_state['cash']
+                        
+                        st.dataframe(
+                            display_df,
+                            use_container_width=True,
+                            height=400,
+                            column_config={
+                                "tradenotes": st.column_config.TextColumn(
+                                    "Trade Notes",
+                                    help="E=Exercise (long options), A=Assignment (short options), Blank=Futures"
+                                )
+                            }
+                        )
+                    else:
+                        st.info("No cash trades generated")"""
 Expiry Trade Generator - Streamlit Web Application
 Automated Excel transformation for derivatives and cash trades with tax calculations
 
