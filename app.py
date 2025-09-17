@@ -98,7 +98,7 @@ with tab5:
                         else:
                             st.info("No net positions to display")
                     else:
-                        st.info("No cash trades to summarize")"""
+                        st.info("No cash trades to summarize")
 Expiry Trade Generator - Streamlit Web Application
 Automated Excel transformation for derivatives and cash trades with tax calculations
 
@@ -432,6 +432,8 @@ class ExpiryTradeProcessor:
         ABC | Trade | Sell | 1500 | 105 | -157,500 | 0   | 0 | 0
         ABC | NET   | NET  | -500 |     | -57,500  | 100 | 2 | 102
         """
+        if cash_df.empty:
+            return pd.DataFrame()
         if cash_df.empty:
             return pd.DataFrame()
         
