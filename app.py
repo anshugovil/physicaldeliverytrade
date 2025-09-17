@@ -99,69 +99,20 @@ st.set_page_config(
 )
 
 # Custom CSS for better UI - Professional light theme
-css_style = """
+st.markdown("""
 <style>
-    .main {
-        padding-top: 2rem;
-    }
-    .stButton>button {
-        width: 100%;
-        border-radius: 5px;
-        height: 3em;
-        font-weight: 500;
-    }
-    .success-metric {
-        background-color: #d4edda;
-        border-left: 4px solid #28a745;
-        padding: 12px;
-        border-radius: 5px;
-        margin: 10px 0;
-    }
-    .error-metric {
-        background-color: #f8d7da;
-        border-left: 4px solid #dc3545;
-        padding: 12px;
-        border-radius: 5px;
-        margin: 10px 0;
-    }
-    .info-metric {
-        background-color: #d1ecf1;
-        border-left: 4px solid #17a2b8;
-        padding: 12px;
-        border-radius: 5px;
-        margin: 10px 0;
-    }
-    .warning-metric {
-        background-color: #fff3cd;
-        border-left: 4px solid #ffc107;
-        padding: 12px;
-        border-radius: 5px;
-        margin: 10px 0;
-    }
-    h1 {
-        color: #2c3e50;
-        font-weight: 600;
-        border-bottom: 3px solid #3498db;
-        padding-bottom: 10px;
-    }
-    h2 {
-        color: #34495e;
-        font-weight: 500;
-    }
-    h3 {
-        color: #34495e;
-        font-weight: 500;
-    }
-    .uploadedFile {
-        border: 2px dashed #3498db !important;
-        border-radius: 10px;
-        padding: 20px;
-        background-color: #f8f9fa;
-    }
+.main {padding-top: 2rem;}
+.stButton>button {width: 100%; border-radius: 5px; height: 3em; font-weight: 500;}
+.success-metric {background-color: #d4edda; border-left: 4px solid #28a745; padding: 12px; border-radius: 5px; margin: 10px 0;}
+.error-metric {background-color: #f8d7da; border-left: 4px solid #dc3545; padding: 12px; border-radius: 5px; margin: 10px 0;}
+.info-metric {background-color: #d1ecf1; border-left: 4px solid #17a2b8; padding: 12px; border-radius: 5px; margin: 10px 0;}
+.warning-metric {background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 12px; border-radius: 5px; margin: 10px 0;}
+h1 {color: #2c3e50; font-weight: 600; border-bottom: 3px solid #3498db; padding-bottom: 10px;}
+h2 {color: #34495e; font-weight: 500;}
+h3 {color: #34495e; font-weight: 500;}
+.uploadedFile {border: 2px dashed #3498db !important; border-radius: 10px; padding: 20px; background-color: #f8f9fa;}
 </style>
-"""
-
-st.markdown(css_style, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
 class ExpiryTradeProcessor:
     """
