@@ -135,7 +135,8 @@ class ExpiryTradeProcessor:
             'Price': last_price,
             'Type': row['Type'],
             'Strike': '',
-            'Lot Size': lot_size
+            'Lot Size': lot_size,
+            'tradenotes': ''  # Blank for futures
         }
         
         # Cash entry - open matching position
@@ -175,6 +176,14 @@ class ExpiryTradeProcessor:
             deriv_buy_sell = 'Sell' if position > 0 else 'Buy'
             deriv_strategy = 'FUSH' if position > 0 else 'FULO'
         
+        # Determine tradenotes
+        tradenotes = ''
+        if is_itm:
+            if deriv_buy_sell == 'Buy':
+                tradenotes = 'A'
+            else:  # Sell
+                tradenotes = 'E'
+        
         derivative = {
             'Underlying': row['Underlying'],
             'Symbol': row['Symbol'],
@@ -185,7 +194,8 @@ class ExpiryTradeProcessor:
             'Price': 0,
             'Type': option_type,
             'Strike': strike,
-            'Lot Size': lot_size
+            'Lot Size': lot_size,
+            'tradenotes': tradenotes
         }
         
         # Cash entry - only for ITM options on single stocks
@@ -194,11 +204,11 @@ class ExpiryTradeProcessor:
             if option_type == 'Call':
                 cash_buy_sell = 'Buy' if position > 0 else 'Sell'
                 cash_strategy = 'EQLO' if position > 0 else 'EQSH'
-                cash_price = strike
+                cash_price = strike  # Calls are exercised at strike price
             else:  # Put
                 cash_buy_sell = 'Sell' if position > 0 else 'Buy'
                 cash_strategy = 'EQSH' if position > 0 else 'EQLO'
-                cash_price = last_price
+                cash_price = strike  # Puts are also exercised at strike price
             
             cash = {
                 'Underlying': row['Underlying'],
@@ -302,7 +312,7 @@ def main():
         - **last price**
         
         ### Output Files:
-        1. **Derivatives**: Closing trades
+        1. **Derivatives**: Closing trades with tradenotes
         2. **Cash**: Cash legs 
         3. **Errors**: Processing issues
         """)
@@ -315,6 +325,11 @@ def main():
         - FUSH: Short risk unwind
         - EQLO: Equity Long
         - EQSH: Equity Short
+        
+        **Trade Notes:**
+        - A: ITM option buy (assignment)
+        - E: ITM option sell (exercise)
+        - Blank: Futures/OTM options
         """)
         
         with st.expander("🔧 Processing Rules"):
@@ -327,10 +342,17 @@ def main():
             - Always close at Price = 0
             - ITM Single Stock: Add cash trade
             - OTM Options: No cash trade
+            - ITM options get tradenotes (A/E)
+            
+            **Trade Notes Column:**
+            - ITM Buy trades: "A" (Assignment)
+            - ITM Sell trades: "E" (Exercise)
+            - Futures: Blank
+            - OTM Options: Blank
             
             **ITM Cash Rules:**
-            - Calls: Buy/Sell at Strike
-            - Puts: Sell/Buy at Last Price
+            - Calls: Buy/Sell at Strike Price
+            - Puts: Sell/Buy at Strike Price
             """)
     
     # Main content area
@@ -415,6 +437,12 @@ def main():
                     st.markdown("**Derivatives File**")
                     st.metric("", f"{len(st.session_state['derivatives'])} trades", label_visibility="collapsed")
                     
+                    # Count ITM options with tradenotes
+                    if not st.session_state['derivatives'].empty and 'tradenotes' in st.session_state['derivatives'].columns:
+                        itm_count = len(st.session_state['derivatives'][st.session_state['derivatives']['tradenotes'].isin(['A', 'E'])])
+                        if itm_count > 0:
+                            st.caption(f"ITM Options: {itm_count}")
+                    
                     if not st.session_state['derivatives'].empty:
                         excel_data = convert_df_to_excel(st.session_state['derivatives'])
                         st.download_button(
@@ -487,7 +515,7 @@ def main():
                 with tab1:
                     if not st.session_state['derivatives'].empty:
                         # Show summary statistics
-                        col1, col2 = st.columns(2)
+                        col1, col2, col3 = st.columns(3)
                         with col1:
                             st.markdown("**Strategy Distribution**")
                             strategy_counts = st.session_state['derivatives']['Strategy'].value_counts()
@@ -496,10 +524,31 @@ def main():
                             st.markdown("**Buy/Sell Distribution**")
                             buysell_counts = st.session_state['derivatives']['Buy/Sell'].value_counts()
                             st.bar_chart(buysell_counts)
+                        with col3:
+                            st.markdown("**Trade Notes Distribution**")
+                            if 'tradenotes' in st.session_state['derivatives'].columns:
+                                tn_counts = st.session_state['derivatives']['tradenotes'].value_counts()
+                                if len(tn_counts) > 0:
+                                    # Create a more descriptive display
+                                    tn_display = {}
+                                    for key, value in tn_counts.items():
+                                        if key == 'A':
+                                            tn_display['A (Assignment)'] = value
+                                        elif key == 'E':
+                                            tn_display['E (Exercise)'] = value
+                                        elif key == '':
+                                            tn_display['Blank (Futures/OTM)'] = value
+                                    st.bar_chart(pd.Series(tn_display))
+                                else:
+                                    st.info("No ITM options")
                         
                         st.markdown("**Full Derivatives Data**")
+                        # Display with proper column order including tradenotes
+                        display_df = st.session_state['derivatives'][['Underlying', 'Symbol', 'Expiry', 'Buy/Sell', 
+                                                                      'Strategy', 'Position', 'Price', 'Type', 
+                                                                      'Strike', 'Lot Size', 'tradenotes']]
                         st.dataframe(
-                            st.session_state['derivatives'],
+                            display_df,
                             use_container_width=True,
                             height=400
                         )
